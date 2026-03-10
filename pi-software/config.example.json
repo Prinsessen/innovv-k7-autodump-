@@ -1,0 +1,39 @@
+{
+    "k7_wifi": {
+        "ssid": "INNOVV_K7",
+        "password": "12345678",
+        "interface": "wlan0",
+        "camera_ip": "192.168.1.254",
+        "static_ip": "192.168.1.100/24",
+        "country": "DK",
+        "connect_timeout_sec": 30,
+        "scan_interval_sec": 30
+    },
+    "k7_api": {
+        "http_port": 80,
+        "heartbeat_interval_sec": 10
+    },
+    "download": {
+        "remote_path": "/INNOVVK7",
+        "nas_mount_path": "/mnt/nas/dashcam",
+        "organize_by_date": true,
+        "delete_after_verified_download": true
+    },
+    "openhab": {
+        "url": "http://192.168.1.10:8080"
+    },
+    "safety": {
+        "max_dump_duration_min": 30,
+        "max_total_download_gb": 50,
+        "min_nas_free_space_gb": 10
+    },
+    "database": {
+        "path": "/opt/innovv-k7/downloaded_files.db"
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "/var/log/innovv-k7-dump.log",
+        "max_bytes": 5242880,
+        "backup_count": 3
+    }
+}

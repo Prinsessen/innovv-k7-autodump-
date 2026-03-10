@@ -1,0 +1,42 @@
+// =============================================================================
+// Motorcycle K7 Auto-Power — Shelly Plus Uni + IRFP9140N MOSFET
+// =============================================================================
+// Shelly Plus Uni controls K7 dashcam power via IRFP9140N P-channel MOSFET.
+// Relay drives MOSFET gate; 10K pull-up ensures fail-safe OFF.
+// Flow: Charger detected -> Relay ON -> MOSFET ON -> K7 powers up ->
+//       Pi dumps footage -> Dump complete -> Relay OFF -> K7 shuts down.
+//
+// Physical wiring:
+//   - Shelly powered from always-on motorcycle battery circuit (fused 3A)
+//   - Shelly relay output -> IRFP9140N gate (via 100 ohm) + 10K pull-up
+//   - IRFP9140N Source: battery +12V, Drain: K7 DC+ input
+//   - Shelly ADC (Voltmeter:100) -> motorcycle battery (voltage sensing)
+//
+// Device: shellyplusuni-xxxxxxxxxxxx  IP: 192.168.1.62  FW: 1.7.4
+// Thing:  shelly:shellyplusuni:xxxxxxxxxxxx
+// =============================================================================
+
+Group   gMC_K7_Power                            "K7 Auto-Power"                 <energy>        (gK7, gVehicle10)
+
+// --- Shelly Plus Uni Channels ---
+// Device: shellyplusuni-xxxxxxxxxxxx  IP: 192.168.1.62  MAC: XXXXXXXXXXXX
+Switch  MC_K7_Relay         "K7 Power Relay [MAP(k7_onoff.map):%s]"     <switch>        (gMC_K7_Power)  ["Switch"]      {channel="shelly:shellyplusuni:xxxxxxxxxxxx:relay1#output"}
+
+Number:ElectricPotential MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"  <energy>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:sensors#voltage"}
+
+// --- Shelly Device Status Channels ---
+Number  MC_K7_Shelly_WiFi_Signal "Shelly WiFi [%d /4]"                  <network>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:device#wifiSignal"}
+Number:Time MC_K7_Shelly_Uptime  "Shelly Uptime [%.0f s]"              <time>          (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:device#uptime"}
+DateTime MC_K7_Shelly_LastUpdate "Shelly Last Update [%1$td.%1$tm %1$tH:%1$tM]" <time>  (gMC_K7_Power)  ["Status"]       {channel="shelly:shellyplusuni:xxxxxxxxxxxx:sensors#lastUpdate"}
+DateTime MC_K7_Shelly_Heartbeat  "Shelly Heartbeat [%1$td.%1$tm %1$tH:%1$tM]"  <time>  (gMC_K7_Power)  ["Status"]       {channel="shelly:shellyplusuni:xxxxxxxxxxxx:device#heartBeat"}
+
+// --- Shelly API-polled Items (updated via JS rule) ---
+Number  MC_K7_Shelly_RSSI    "Shelly RSSI [%d dBm]"                    <network>       (gMC_K7_Power)  ["Measurement"]
+String  MC_K7_Shelly_SSID    "Shelly SSID [%s]"                        <network>       (gMC_K7_Power)  ["Status"]
+
+// --- Virtual State Items (no channel binding) ---
+String  MC_K7_Power_State   "K7 Power State [%s]"                       <status>        (gMC_K7_Power)  ["Status"]
+Switch  MC_Charger_Detected "Charger Detected [MAP(k7_onoff.map):%s]"   <energy>        (gMC_K7_Power)  ["Status"]
+String  MC_K7_Power_Reason  "Power Reason [%s]"                         <text>          (gMC_K7_Power)  ["Status"]
+DateTime MC_K7_Relay_Since  "Relay ON Since [%1$tF %1$tR]"              <time>          (gMC_K7_Power)  ["Status"]
+

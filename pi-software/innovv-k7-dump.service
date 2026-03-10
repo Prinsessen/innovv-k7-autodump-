@@ -1,0 +1,53 @@
+[Unit]
+Description=INNOVV K7 Dashcam Footage Dump Service
+Documentation=file:///opt/innovv-k7/README.md
+After=network-online.target
+Wants=network-online.target
+
+# Ensure WiFi hardware is ready
+After=sys-subsystem-net-devices-wlan0.device
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Working directory
+WorkingDirectory=/opt/innovv-k7
+
+# Service execution
+ExecStart=/opt/innovv-k7/.venv/bin/python3 /opt/innovv-k7/innovv_k7_dump.py
+ExecStop=/bin/kill -SIGTERM $MAINPID
+
+# Restart policy: restart on failure with increasing delay
+Restart=on-failure
+RestartSec=30
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# Resource limits
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=5
+
+# Graceful shutdown timeout (allow active HTTP transfers to finish)
+TimeoutStopSec=60
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=innovv-k7
+
+# Security hardening (as much as possible while needing wlan0)
+ProtectSystem=strict
+ReadWritePaths=/opt/innovv-k7 /mnt/nas/dashcam /run/wpa_supplicant /var/run /var/log
+ProtectHome=yes
+NoNewPrivileges=no
+PrivateTmp=yes
+
+# Network namespace not possible (we need wlan0 control)
+# Capabilities needed: CAP_NET_ADMIN for WiFi, CAP_NET_RAW for scanning
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target
