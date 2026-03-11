@@ -92,8 +92,11 @@ No manual intervention. Footage is automatically backed up whenever you charge.
      │                                            │
      │                                       Battery GND
      │
-     └── IRFP9140N Drain (pin 2) ──|>|── SB540 ──> K7 DC power input (+)
-                                  (Schottky diode, cathode toward K7)
+     └── IRFP9140N Drain (pin 2) ──────────┐
+                                          ├──> K7 DC power input (+)
+  Motorcycle ignition 12V ──►|── SB540 ──┘
+                            (Schottky diode: anode=ignition, cathode=splice)
+                            (Blocks MOSFET back-feed to ignition circuit)
 
   Battery GND ─────────────────────> K7 DC power input (-)
 ```
