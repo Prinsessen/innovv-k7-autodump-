@@ -121,14 +121,16 @@ rules.JSRule({
               console.info(LOG + ': Ignition debounce expired but ignition now OFF - ignoring');
               return;
             }
-            console.info(LOG + ': Ignition confirmed ON after ' + IGN_DEBOUNCE_S + 's debounce');
             var currentState = getState();
+            // If relay is ON for charger/transfer, ignition signal is MOSFET back-feed — ignore
+            if (currentState === STATES.CHARGING || currentState === STATES.TRANSFERRING || currentState === STATES.COOLDOWN) {
+              console.info(LOG + ': Ignition suppressed - back-feed from MOSFET (state: ' + currentState + ')');
+              return;
+            }
+            console.info(LOG + ': Ignition confirmed ON after ' + IGN_DEBOUNCE_S + 's debounce');
             cancelTimer('stabTimer');
             cancelTimer('maxOnTimer');
             cancelTimer('cooldownTimer');
-            if (currentState === STATES.CHARGING || currentState === STATES.TRANSFERRING || currentState === STATES.COOLDOWN) {
-              relayOff('Ignition ON overrides charger');
-            }
             setState(STATES.RIDING, 'Ignition ON');
             items.getItem('MC_Charger_Detected').postUpdate('OFF');
           }
