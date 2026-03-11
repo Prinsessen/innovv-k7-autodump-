@@ -4,7 +4,7 @@
 const { rules, triggers, items, actions, time } = require('openhab');
 
 const LOG = 'k7_power';
-const CHARGER_V   = 13.2;
+const CHARGER_V   = 12.8;
 const LOW_BATT_V  = 12.0;
 const STAB_SEC    = 60;
 const MAX_ON_MIN  = 30;
@@ -12,7 +12,7 @@ const COOLDOWN_S  = 30;
 
 const STATES = {
   PARKED: 'PARKED', RIDING: 'RIDING', CHARGING: 'CHARGING',
-  DUMPING: 'DUMPING', COOLDOWN: 'COOLDOWN', LOW_BATTERY: 'LOW_BATTERY'
+  TRANSFERRING: 'TRANSFERRING', COOLDOWN: 'COOLDOWN', LOW_BATTERY: 'LOW_BATTERY'
 };
 
 function getState() {
@@ -28,9 +28,6 @@ function setState(newState, reason) {
 
 function relayOn(reason) {
   items.getItem('MC_K7_Relay').sendCommand('ON');
-  items.getItem('MC_K7_Relay_Since').postUpdate(
-    time.ZonedDateTime.now().format(time.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
-  );
   console.info(LOG + ': Relay ON - ' + reason);
 }
 
@@ -60,10 +57,10 @@ function startChargerSequence(voltage, source) {
   var stabTimer = actions.ScriptExecution.createTimer(
     time.ZonedDateTime.now().plusSeconds(STAB_SEC),
     function () {
-      var recheck = parseFloat(items.getItem('Vehicle10_Power').state);
+      var recheck = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
       if (recheck > CHARGER_V) {
         console.info(LOG + ': Stabilisation complete, V=' + recheck.toFixed(1) + 'V - relay ON');
-        setState(STATES.DUMPING, 'Charger confirmed after ' + STAB_SEC + 's');
+        setState(STATES.TRANSFERRING, 'Charger confirmed after ' + STAB_SEC + 's');
         relayOn('Charger confirmed');
 
         cancelTimer('maxOnTimer');
@@ -114,7 +111,7 @@ rules.JSRule({
         cancelTimer('stabTimer');
         cancelTimer('maxOnTimer');
         cancelTimer('cooldownTimer');
-        if (currentState === STATES.CHARGING || currentState === STATES.DUMPING) {
+        if (currentState === STATES.CHARGING || currentState === STATES.TRANSFERRING) {
           relayOff('Ignition ON overrides charger');
         }
         setState(STATES.RIDING, 'Ignition ON');
@@ -125,7 +122,7 @@ rules.JSRule({
         var checkTimer = actions.ScriptExecution.createTimer(
           time.ZonedDateTime.now().plusSeconds(10),
           function () {
-            var v = parseFloat(items.getItem('Vehicle10_Power').state);
+            var v = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
             console.info(LOG + ': Post-ignition voltage check: ' + v.toFixed(1) + 'V');
             if (v > CHARGER_V) startChargerSequence(v, 'Post-ignition');
           }
@@ -142,10 +139,10 @@ rules.JSRule({
 rules.JSRule({
   name: 'K7 Power - Voltage Monitor',
   description: 'Monitors battery voltage for charger detection and low battery',
-  triggers: [triggers.ItemStateChangeTrigger('Vehicle10_Power')],
+  triggers: [triggers.ItemStateChangeTrigger('MC_K7_Shelly_Voltage')],
   execute: function () {
     try {
-      var powerItem = items.getItem('Vehicle10_Power');
+      var powerItem = items.getItem('MC_K7_Shelly_Voltage');
       if (powerItem.isUninitialized) return;
       var voltage = parseFloat(powerItem.state);
       var currentState = getState();
@@ -190,7 +187,7 @@ rules.JSRule({
     try {
       var status = items.getItem('K7_Dump_Status').state;
       var currentState = getState();
-      if (currentState !== STATES.DUMPING) return;
+      if (currentState !== STATES.TRANSFERRING) return;
 
       var doneStatuses = ['complete', 'complete (no new files)'];
       if (doneStatuses.indexOf(status) >= 0) {
@@ -247,6 +244,28 @@ rules.JSRule({
       }
     } catch (e) {
       console.debug(LOG + ': Shelly WiFi poll error: ' + e.message);
+    }
+  }
+});
+
+// =============================================================================
+// Rule 6: Relay State Tracker (updates Relay_Since on any ON, clears on OFF)
+// Fires for both rule-driven and manual sendCommand.
+// =============================================================================
+rules.JSRule({
+  name: 'K7 Power - Relay State Tracker',
+  description: 'Tracks MC_K7_Relay ON/OFF from any source and updates Relay_Since',
+  triggers: [triggers.ItemStateChangeTrigger('MC_K7_Relay')],
+  execute: function () {
+    var state = items.getItem('MC_K7_Relay').state;
+    if (state === 'ON') {
+      items.getItem('MC_K7_Relay_Since').postUpdate(
+        time.ZonedDateTime.now().format(time.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+      );
+      console.info(LOG + ': Relay ON detected - Relay_Since updated');
+    } else {
+      items.getItem('MC_K7_Relay_Since').postUpdate('NULL');
+      console.info(LOG + ': Relay OFF detected - Relay_Since cleared');
     }
   }
 });

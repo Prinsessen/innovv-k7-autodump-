@@ -17,10 +17,10 @@
 //
 // Logic:
 //   1. Every 30s: read Voltmeter:100 voltage
-//   2. If voltage > 13.2V for 90s continuously -> charger detected -> relay ON
+//   2. If voltage > 12.53V for 90s continuously -> charger detected -> relay ON
 //   3. Relay ON drives MOSFET gate to GND -> MOSFET ON -> K7 powered
 //   4. Relay stays ON for max 25 minutes (dump window)
-//   5. After 25 min or voltage drops below 13.2V -> relay OFF
+//   5. After 25 min or voltage drops below 12.53V -> relay OFF
 //   6. If voltage < 11.5V -> relay forced OFF immediately (protect battery)
 //   7. Relay OFF -> 10K pull-up holds gate high -> MOSFET OFF -> K7 off
 //
@@ -33,7 +33,7 @@
 
 // --- Configuration ---
 let CONFIG = {
-  chargerVoltage: 13.2,     // V — threshold for charger detection
+  chargerVoltage: 12.53,    // V — raw ADC threshold (12.8V real minus 0.27V offset)
   lowBattVoltage: 11.5,     // V — emergency cutoff
   checkIntervalMs: 30000,   // 30s — ADC polling interval
   stabChecks: 3,            // 3 checks (90s) required to confirm charger

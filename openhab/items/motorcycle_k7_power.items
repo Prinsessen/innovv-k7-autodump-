@@ -12,6 +12,11 @@
 //   - IRFP9140N Source: battery +12V, Drain: K7 DC+ input
 //   - Shelly ADC (Voltmeter:100) -> motorcycle battery (voltage sensing)
 //
+// ADC Calibration (2026-03-11):
+//   Fluke 175 reference: 13.13V, Shelly raw ADC: 12.86V → offset +0.27V
+//   Applied via system:offset profile on MC_K7_Shelly_Voltage channel.
+//   Re-calibrate if Shelly firmware changes or wiring is modified.
+//
 // Device: shellyplusuni-xxxxxxxxxxxx  IP: 192.168.1.62  FW: 1.7.4
 // Thing:  shelly:shellyplusuni:xxxxxxxxxxxx
 // =============================================================================
@@ -22,7 +27,7 @@ Group   gMC_K7_Power                            "K7 Auto-Power"                 
 // Device: shellyplusuni-xxxxxxxxxxxx  IP: 192.168.1.62  MAC: XXXXXXXXXXXX
 Switch  MC_K7_Relay         "K7 Power Relay [MAP(k7_onoff.map):%s]"     <switch>        (gMC_K7_Power)  ["Switch"]      {channel="shelly:shellyplusuni:xxxxxxxxxxxx:relay1#output"}
 
-Number:ElectricPotential MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"  <energy>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:sensors#voltage"}
+Number:ElectricPotential MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"  <energy>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:sensors#voltage" [profile="system:offset", offset="0.27 V"]}
 
 // --- Shelly Device Status Channels ---
 Number  MC_K7_Shelly_WiFi_Signal "Shelly WiFi [%d /4]"                  <network>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:device#wifiSignal"}

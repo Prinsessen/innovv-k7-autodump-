@@ -10,8 +10,9 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                           │                                         │
   Traccar FMM920 ────────>│  vehicle-motorcycle-k7-power.js         │
   (Vehicle10_Ignition)     │  ┌───────────────────────────────────┐ │
-  (Vehicle10_Power)        │  │ State Machine (5 JSRules)         │ │
-                           │  │ RIDING->CHARGING->DUMPING->COOLDOWN │
+  Shelly ADC ─────────────>│  │ State Machine (6 JSRules)         │ │
+  (MC_K7_Shelly_Voltage)   │  │                                   │ │
+                           │  │ RIDING->CHARGING->TRANSFERRING->COOLDOWN │
                            │  │ <-PARKED<-LOW_BATTERY             │ │
   K7_Dump_Status ─────────>│  └───────────┬───────────────────────┘ │
   (from Pi 4 REST API)     │              │ sendCommand(ON/OFF)     │
@@ -50,12 +51,23 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                               └───────────┬────────────────┘
                                           │ WiFi 5GHz
                                           v
-                              ┌───────────────────────────┐
-                              │  Pi 4 (192.168.1.60)         │
-                              │  innovv-k7-dump.service    │
-                              │  Detects -> Downloads      │
-                              │  -> Verifies -> Deletes    │
-                              │  -> Reports to openHAB     │
+                              ┌──── 5dBi RP-SMA antenna ───┐
+                              │   (ceiling above motorcycle)│
+                              └───────────┬────────────────┘
+                                          │ RP-SMA extension
+                                          │ cable RG174 (2m)
+                                          │ through PG7 gland
+                              ┌───────────┴────────────────┐
+                              │  IP65 Enclosure (wall)      │
+                              │  ┌────────────────────────┐ │
+                              │  │ Pi 4 (192.168.1.60)       │ │
+                              │  │ eth0: home LAN         │ │
+                              │  │ ALFA AWUS036ACM (USB3) │ │
+                              │  │ innovv-k7-dump.service │ │
+                              │  │ Detects -> Downloads   │ │
+                              │  │ -> Verifies -> Deletes │ │
+                              │  │ -> Reports to openHAB  │ │
+                              │  └────────────────────────┘ │
                               └────────────────────────────┘
 ```
 
@@ -63,7 +75,7 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
 
 The INNOVV K7 has no remote power control — it only powers on via the ignition switch. This means footage can only be dumped while riding (engine running). With the Shelly Plus Uni:
 
-1. **Charger connected** → Shelly detects high voltage (>13.2V) with ignition OFF
+1. **Charger connected** → Shelly ADC detects high voltage (>12.8V corrected) with ignition OFF
 2. **Relay turns ON** → K7 powers up and broadcasts its WiFi AP
 3. **Pi detects K7** → Downloads all new footage to NAS, verifies SHA-256, deletes from K7
 4. **Dump complete** → Shelly relay turns OFF, K7 shuts down
@@ -82,7 +94,10 @@ No manual intervention needed. Footage is automatically backed up whenever the c
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video | Mounted on motorcycle |
 | Teltonika FMM920 | GPS tracker (000000000000000) | Ignition state + battery voltage | Mounted on motorcycle |
 | Vitronic charger | Battery charger (~14.4V output) | Charges battery, triggers dump | Garage |
-| Pi 4 | Raspberry Pi 4 | K7 footage dump service | Garage (192.168.1.60) |
+| Pi 4 | Raspberry Pi 4 | K7 footage dump service | Garage IP65 enclosure (192.168.1.60) |
+| ALFA AWUS036ACM | MT7612U, AC1200, USB 3.0 | 5GHz WiFi to K7 AP (mt76 in-kernel driver) | Inside IP65 enclosure with Pi |
+| RP-SMA extension cable | RG174 coax, 2m, RP-SMA M→F | Antenna feed through IP65 enclosure | PG7 cable gland pass-through |
+| 5dBi dual-band antenna | RP-SMA, included with ALFA | 5GHz reception from K7 | Ceiling-mounted above motorcycle |
 
 ### Software
 
@@ -90,7 +105,7 @@ No manual intervention needed. Footage is automatically backed up whenever the c
 |------|---------|
 | `items/motorcycle_k7_power.items` | 14 items: Shelly channels (relay, voltage, WiFi, uptime, heartbeat) + API-polled (SSID, RSSI) + virtual state items |
 | `things/shelly.things` | Shelly Plus Uni thing definition (IP: 192.168.1.62) |
-| `automation/js/vehicle-motorcycle-k7-power.js` | State machine (5 JSRules): init, ignition, voltage, dump complete, WiFi poll |
+| `automation/js/vehicle-motorcycle-k7-power.js` | State machine (6 JSRules): init, ignition, voltage, dump complete, WiFi poll, relay tracker |
 | `innovv-k7/shelly-failsafe-script.js` | Local failsafe for Shelly (mJS, Script ID 1) — runs on-device when openHAB unavailable |
 | `innovv-k7/pi-software/innovv_k7_dump.py` | Pi dump service (**NOT modified**) |
 | `sitemaps/myhouse.sitemap` | K7 Auto-Power + Shelly Device Status frames in INNOVV K7 section |
@@ -103,7 +118,7 @@ No manual intervention needed. Footage is automatically backed up whenever the c
 |-------|-------|-------------|
 | **RIDING** | OFF | Ignition ON — K7 powered by ignition circuit |
 | **CHARGING** | OFF | Charger detected, 60s stabilisation in progress |
-| **DUMPING** | ON | K7 powered, waiting for Pi dump to complete |
+| **TRANSFERRING** | ON | K7 powered, waiting for Pi file transfer to complete |
 | **COOLDOWN** | OFF→ | Dump complete, 30s cooldown before relay OFF |
 | **PARKED** | OFF | Normal parked state |
 | **LOW_BATTERY** | OFF | Battery < 12.0V — relay forced off |
@@ -114,9 +129,9 @@ No manual intervention needed. Footage is automatically backed up whenever the c
          Ignition ON
     ┌────────────────────┐
     │                    ▼
- PARKED ──(V>13.2V)──► CHARGING ──(60s)──► DUMPING
+ PARKED ──(V>12.8V)──► CHARGING ──(60s)──► TRANSFERRING
     ▲                    │                    │
-    │              V<13.2V│              "complete"
+    │              V<12.8V│              "complete"
     │                    ▼                    ▼
     │                 PARKED              COOLDOWN ──(30s)──► PARKED
     │                                         
@@ -341,7 +356,37 @@ Voltmeter.GetStatus { id: 100 }           -> { voltage: 12.18 }
 
 This is exposed to openHAB via the `sensors#voltage` channel.
 
-### 5. Failsafe Script (on-device)
+### 5. ADC Voltage Calibration
+
+The Shelly Plus Uni ADC (Voltmeter:100) has a ~2% tolerance, resulting in a consistent
+low reading compared to reference instruments.
+
+**Calibration performed 2026-03-11:**
+
+| Source | Voltage |
+|--------|---------|
+| Vitronic BSC IP65 HQ1939B charger display | 13.18 V |
+| Fluke 175 multimeter (reference) | **13.13 V** |
+| Shelly ADC raw reading | 12.86 V |
+| **Offset** | **+0.27 V** |
+
+**Correction applied** via `system:offset` profile on the item channel binding in
+`items/motorcycle_k7_power.items`:
+
+```openhab
+Number:ElectricPotential MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"
+    {channel="...sensors#voltage" [profile="system:offset", offset="0.27 V"]}
+```
+
+This adds +0.27V to every Shelly ADC reading before it reaches rules and the UI.
+All voltage thresholds in the rules (`CHARGER_V = 12.8`, `LOW_BATT_V = 12.0`) work
+against the corrected (offset-adjusted) value. The on-device Shelly failsafe uses
+`chargerVoltage = 12.53` (12.8 − 0.27 offset) since it reads raw ADC values.
+
+> **Re-calibrate** if: Shelly firmware changes, wiring is modified, or a different
+> battery/charger combination shows a different offset vs. Fluke reference.
+
+### 6. Failsafe Script (on-device)
 
 The failsafe script runs directly on the Shelly (mJS engine), providing basic K7 power control when openHAB is unreachable:
 
@@ -351,12 +396,12 @@ The failsafe script runs directly on the Shelly (mJS engine), providing basic K7
 
 The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 
-### 6. Verify
+### 7. Verify
 
-1. Connect charger and watch `MC_K7_Power_State`: `PARKED -> CHARGING -> DUMPING`
+1. Connect charger and watch `MC_K7_Power_State`: `PARKED -> CHARGING -> TRANSFERRING`
 2. Check logs: `tail -f /var/log/openhab/openhab.log | grep k7_power`
-3. Pi should detect K7 WiFi and start dumping
-4. After dump: `DUMPING -> COOLDOWN -> PARKED`
+3. Pi should detect K7 WiFi and start transferring footage
+4. After transfer: `TRANSFERRING -> COOLDOWN -> PARKED`
 
 ## Items Reference
 
@@ -365,7 +410,7 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 | Item | Type | Channel | Purpose |
 |------|------|---------|---------|
 | `MC_K7_Relay` | Switch | `relay1#output` | Shelly relay (drives MOSFET gate) |
-| `MC_K7_Shelly_Voltage` | Number:ElectricPotential | `sensors#voltage` | ADC battery voltage (Voltmeter:100) |
+| `MC_K7_Shelly_Voltage` | Number:ElectricPotential | `sensors#voltage` | ADC battery voltage (Voltmeter:100, +0.27V offset calibration) |
 | `MC_K7_Shelly_WiFi_Signal` | Number | `device#wifiSignal` | WiFi signal strength (0-4 bars) |
 | `MC_K7_Shelly_Uptime` | Number:Time | `device#uptime` | Seconds since Shelly power-on |
 | `MC_K7_Shelly_LastUpdate` | DateTime | `sensors#lastUpdate` | Last state change timestamp |
@@ -385,7 +430,7 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 | `MC_K7_Power_State` | String | State machine current state |
 | `MC_Charger_Detected` | Switch | Charger detected flag |
 | `MC_K7_Power_Reason` | String | Human-readable reason for state |
-| `MC_K7_Relay_Since` | DateTime | When relay was last turned ON |
+| `MC_K7_Relay_Since` | DateTime | When relay was last turned ON (updated by Rule 6 on any ON, cleared on OFF) |
 
 ## Rules Reference
 
@@ -393,9 +438,10 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 |---|------|---------|--------|
 | 1 | K7 Power - System Init | System startup (level 100) | Forces relay OFF, resets to PARKED |
 | 2 | K7 Power - Ignition Handler | `Vehicle10_Ignition` changed | ON: cancel all, RIDING. OFF: check voltage after 10s |
-| 3 | K7 Power - Voltage Monitor | `Vehicle10_Power` changed | Charger detect (>13.2V), disconnect, low battery (<12.0V) |
+| 3 | K7 Power - Voltage Monitor | `MC_K7_Shelly_Voltage` changed | Charger detect (>12.8V), disconnect, low battery (<12.0V) |
 | 4 | K7 Power - Dump Complete | `K7_Dump_Status` changed | "complete": cooldown (30s) then relay OFF |
 | 5 | K7 Power - Shelly WiFi Poll | Cron `0 * * * * ?` (every minute) | HTTP GET to Shelly, updates SSID + RSSI items |
+| 6 | K7 Power - Relay State Tracker | `MC_K7_Relay` changed | Updates `MC_K7_Relay_Since` on ON, clears on OFF (fires for rule-driven and manual commands) |
 
 ## K7 Dump Status Values
 
@@ -421,7 +467,7 @@ The local failsafe (`innovv-k7/shelly-failsafe-script.js`) runs on the Shelly's 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
 | Check interval | 30s | ADC polling frequency |
-| Charger threshold | 13.2V | Same as openHAB rule |
+| Charger threshold | 12.53V (raw) | Equals 12.8V real minus 0.27V ADC offset |
 | Stabilisation | 3 checks (90s) | Confirm charger is stable |
 | Max ON time | 25 min | Shorter than openHAB's 30 min |
 | Low battery cutoff | 11.5V | Emergency protection |
@@ -486,10 +532,10 @@ The Shelly Plus Uni is powered directly from the motorcycle battery on an always
 - Verify wiring: relay output → K7 DC input
 
 ### Charger not detected
-- Check `Vehicle10_Power` value — should be >13.2V when charger connected
-- Verify `Vehicle10_Ignition` is OFF
-- Check FMM920 is reporting (not in deep sleep)
-- Check `MC_K7_Shelly_Voltage` for independent voltage reading
+- Check `MC_K7_Shelly_Voltage` value — should be >12.8V when charger connected
+- Verify `Vehicle10_Ignition` is OFF (or FMM920 not reporting)
+- Check Shelly thing is ONLINE in openHAB
+- Check raw Shelly ADC via `http://192.168.1.62/rpc/Voltmeter.GetStatus?id=100`
 
 ### Dump doesn't start
 - Pi dump service is independent — check `systemctl status innovv-k7-dump` on Pi
