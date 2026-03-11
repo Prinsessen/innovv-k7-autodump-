@@ -29,8 +29,8 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                               │    <- battery voltage      │
                               │  Relay1 output             │
                               │    -> IRFP9140N gate       │
-                              │  WiFi: STA0=YourHomeSSID (home) │
-                              │        STA1=YourMobileHotspot (mob) │
+                              │  WiFi: STA0=Devices (home) │
+                              │        STA1=AgesenAP (mob) │
                               │  BLE: disabled             │
                               │  Script: K7 Failsafe (mJS) │
                               └───────────┬────────────────┘
@@ -75,7 +75,7 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
 
 The INNOVV K7 has no remote power control — it only powers on via the ignition switch. This means footage can only be dumped while riding (engine running). With the Shelly Plus Uni:
 
-1. **Charger connected** → Shelly ADC detects high voltage (>12.8V corrected) with ignition OFF
+1. **Charger connected** → Shelly ADC detects high voltage (>13.0V raw) with ignition OFF
 2. **Relay turns ON** → K7 powers up and broadcasts its WiFi AP
 3. **Pi detects K7** → Downloads all new footage to NAS, verifies SHA-256, deletes from K7
 4. **Dump complete** → Shelly relay turns OFF, K7 shuts down
@@ -91,6 +91,7 @@ No manual intervention needed. Footage is automatically backed up whenever the c
 | Shelly Plus Uni | SNSN-0043X (Gen 2) | Relay + ADC voltage (Voltmeter:100) + WiFi | Mounted on motorcycle |
 | IRFP9140N | P-channel MOSFET, -100V/-23A, TO-247 | High-side power switch for K7 | Inline in K7 wiring harness |
 | 10K resistor | 1/4W, any tolerance | Gate pull-up (fail-safe OFF) | Soldered to MOSFET |
+| Schottky diode | SB540 (5A/40V) or 1N5822 (3A/40V) | **TODO** — Blocks MOSFET back-feed into ignition circuit | Inline on ignition wire before K7/MOSFET splice |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video | Mounted on motorcycle |
 | Teltonika FMM920 | GPS tracker (000000000000000) | Ignition state + battery voltage | Mounted on motorcycle |
 | Vitronic charger | Battery charger (~14.4V output) | Charges battery, triggers dump | Garage |
@@ -129,9 +130,9 @@ No manual intervention needed. Footage is automatically backed up whenever the c
          Ignition ON
     ┌────────────────────┐
     │                    ▼
- PARKED ──(V>12.8V)──► CHARGING ──(60s)──► TRANSFERRING
+ PARKED ──(V>13.0)───► CHARGING ──(60s)──► TRANSFERRING
     ▲                    │                    │
-    │              V<12.8V│              "complete"
+    │              V<13.0V│              "complete"
     │                    ▼                    ▼
     │                 PARKED              COOLDOWN ──(30s)──► PARKED
     │                                         
@@ -146,7 +147,8 @@ No manual intervention needed. Footage is automatically backed up whenever the c
 | Stabilisation delay | 60 seconds | Avoids false triggers from voltage spikes |
 | Safety timeout | 30 minutes | Prevents indefinite relay ON (battery drain) |
 | Low battery cutoff | 12.0V | Protects battery from deep discharge |
-| Ignition override | Immediate | Relay OFF when ignition turns ON (riding) |
+| Ignition override | Debounced (30s) | Relay OFF when ignition confirmed ON for 30s (filters MOSFET false triggers) |
+| Ignition debounce | 30 seconds | FMM920 reports false ignition from MOSFET switching on shared circuit |
 | Post-dump cooldown | 30 seconds | Clean K7 shutdown after dump |
 | Charger removal | Immediate | Relay OFF if voltage drops during dump |
 
@@ -321,14 +323,14 @@ The Shelly has dual WiFi for home and mobile connectivity:
 
 | Network | SSID | Purpose |
 |---------|------|---------|
-| STA0 (primary) | YourHomeSSID | Home WiFi — openHAB control |
-| STA1 (failover) | YourMobileHotspot | Phone hotspot — remote relay control when away from home |
+| STA0 (primary) | Devices | Home WiFi — openHAB control |
+| STA1 (failover) | AgesenAP | Phone hotspot — remote relay control when away from home |
 
 **BLE** is disabled to reduce parasitic current draw (~5-10mA saved). Use STA1 (phone hotspot) for remote control when away from home.
 
 To reconfigure WiFi:
 1. Power on the Shelly (connect battery or charger)
-2. If no WiFi available, Shelly creates AP: `ShellyPlusUni-XXXXXXXXXXXX`
+2. If no WiFi available, Shelly creates AP: `ShellyPlusUni-E08CFE8B1C3C`
 3. Connect phone to Shelly AP, open `192.168.33.1`
 4. Configure WiFi credentials
 
@@ -358,33 +360,91 @@ This is exposed to openHAB via the `sensors#voltage` channel.
 
 ### 5. ADC Voltage Calibration
 
-The Shelly Plus Uni ADC (Voltmeter:100) has a ~2% tolerance, resulting in a consistent
-low reading compared to reference instruments.
+The Shelly Plus Uni ADC (Voltmeter:100) reads ~2-3% low compared to a Fluke reference,
+but the offset is **non-linear** — it varies with voltage level.
 
-**Calibration performed 2026-03-11:**
+**Calibration performed 2026-03-11 (on bike with Fluke 175 reference):**
 
-| Source | Voltage |
-|--------|---------|
-| Vitronic BSC IP65 HQ1939B charger display | 13.18 V |
-| Fluke 175 multimeter (reference) | **13.13 V** |
-| Shelly ADC raw reading | 12.86 V |
-| **Offset** | **+0.27 V** |
+| Condition | Fluke (real) | Shelly raw ADC | Offset |
+|-----------|-------------|----------------|--------|
+| Battery only (charger off) | 12.77 V | 12.37 V | +0.40 V |
+| Charger connected (Vitronic BSC IP65) | 13.70 V | 13.55 V | +0.15 V |
 
-**Correction applied** via `system:offset` profile on the item channel binding in
-`items/motorcycle_k7_power.items`:
+The offset changes from +0.40V at ~12.4V to +0.15V at ~13.5V — a linear `system:offset`
+profile cannot correct both ends accurately.
 
-```openhab
-Number:ElectricPotential MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"
-    {channel="...sensors#voltage" [profile="system:offset", offset="0.27 V"]}
+**Decision: No offset correction.** All thresholds use **raw ADC values** directly:
+
+| Threshold | Raw ADC value | Purpose |
+|-----------|--------------|---------|
+| `CHARGER_V` (JS rule) | **13.0 V** | Charger detection (midpoint: 0.63V above battery, 0.55V below charger) |
+| `chargerVoltage` (Shelly failsafe) | **13.0 V** | Same threshold, same raw values |
+| `LOW_BATT_V` (JS rule) | **12.0 V** | Emergency low battery cutoff |
+| `lowBattVoltage` (Shelly failsafe) | **11.5 V** | Emergency cutoff (on-device) |
+
+This ensures the JS rule and Shelly failsafe use identical raw ADC values with no
+offset math to keep in sync. The UI shows raw ADC voltage (not real voltage).
+
+> **Re-calibrate** if: Battery/charger changes, wiring modifications, or if the
+> 13.0V threshold doesn't reliably separate battery-only from charger-connected.
+> Take 5 stable readings with charger OFF, then 5 with charger ON, and pick a
+> midpoint.
+
+### 5a. Ignition Back-Feed Problem (MOSFET → FMM920)
+
+**Problem discovered 2026-03-11:** The MOSFET drain (ORANGE wire) is spliced to the
+K7 YELLOW ignition wire, which connects back through the bike's ignition circuit
+to other devices — including the Teltonika FMM920 DIN1 (ignition sense input).
+
+When the Shelly relay turns ON the MOSFET for auto-power, 12V back-feeds from the
+MOSFET drain through the ignition wire to the FMM920. The FMM920 reports ignition=ON
+to Traccar, which triggers false "Springfield Started" / "Springfield Parked" email
+notifications every time the K7 auto-power cycles.
+
+```
+  CURRENT WIRING (back-feeds):
+
+  Ignition key ──────────┬──── FMM920 DIN1 (ignition sense)
+                         │
+  MOSFET Drain ─────────┤     ← 12V back-feeds HERE when relay ON
+                         │
+                         └──── K7 YELLOW (ignition input)
 ```
 
-This adds +0.27V to every Shelly ADC reading before it reaches rules and the UI.
-All voltage thresholds in the rules (`CHARGER_V = 12.8`, `LOW_BATT_V = 12.0`) work
-against the corrected (offset-adjusted) value. The on-device Shelly failsafe uses
-`chargerVoltage = 12.53` (12.8 − 0.27 offset) since it reads raw ADC values.
+**Hardware fix: Schottky blocking diode**
 
-> **Re-calibrate** if: Shelly firmware changes, wiring is modified, or a different
-> battery/charger combination shows a different offset vs. Fluke reference.
+Install a Schottky diode (SB540 or 1N5822) in the ignition wire BEFORE the splice
+point where the MOSFET orange wire connects. Cathode (stripe) toward the K7/MOSFET
+junction, anode toward the ignition switch.
+
+```
+  FIXED WIRING (with diode — isolated):
+
+  Ignition key ──►|──────┬──── FMM920 DIN1          (ignition only)
+               diode     │    (diode blocks MOSFET back-feed)
+              (SB540)    │
+  MOSFET Drain ─────────┤
+                         │
+                         └──── K7 YELLOW (ignition input)
+
+  K7 gets power from EITHER source (ignition OR MOSFET)
+  but MOSFET cannot reach FMM920 or other ignition-circuit devices
+```
+
+**Diode specs:**
+- **SB540** — 5A, 40V Schottky, ~0.3V forward drop (preferred — more headroom)
+- **1N5822** — 3A, 40V Schottky, ~0.3V forward drop (adequate — K7 draws <1A)
+- Schottky preferred over standard (1N5400) for lower voltage drop (0.3V vs 0.7V)
+- The 0.3V drop means ignition-fed K7 sees 11.7V instead of 12.0V — no issue for K7
+
+> **⚠️ TODO: Install diode.** Until installed, software workarounds are active:
+> - 30s ignition debounce (`IGN_DEBOUNCE_S = 30`) in `vehicle-motorcycle-k7-power.js` Rule 2
+> - K7 state suppression in `vehicle-motorcycle-ignition.js` (both ON and OFF rules)
+>
+> **After diode is installed, remove these software workarounds:**
+> 1. In `vehicle-motorcycle-k7-power.js`: Set `IGN_DEBOUNCE_S = 0` or remove debounce logic in Rule 2
+> 2. In `vehicle-motorcycle-ignition.js`: Remove the `MC_K7_Power_State` check blocks from both Rule 1 (Ignition ON) and Rule 2 (Ignition OFF)
+> 3. Test that real ignition ON/OFF sends emails correctly and MOSFET cycling does NOT
 
 ### 6. Failsafe Script (on-device)
 
@@ -410,7 +470,7 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 | Item | Type | Channel | Purpose |
 |------|------|---------|---------|
 | `MC_K7_Relay` | Switch | `relay1#output` | Shelly relay (drives MOSFET gate) |
-| `MC_K7_Shelly_Voltage` | Number:ElectricPotential | `sensors#voltage` | ADC battery voltage (Voltmeter:100, +0.27V offset calibration) |
+| `MC_K7_Shelly_Voltage` | Number:ElectricPotential | `sensors#voltage` | ADC battery voltage (Voltmeter:100, raw — no offset) |
 | `MC_K7_Shelly_WiFi_Signal` | Number | `device#wifiSignal` | WiFi signal strength (0-4 bars) |
 | `MC_K7_Shelly_Uptime` | Number:Time | `device#uptime` | Seconds since Shelly power-on |
 | `MC_K7_Shelly_LastUpdate` | DateTime | `sensors#lastUpdate` | Last state change timestamp |
@@ -420,7 +480,7 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 
 | Item | Type | Source | Purpose |
 |------|------|--------|---------|
-| `MC_K7_Shelly_SSID` | String | `Wifi.GetStatus` | Connected WiFi name (YourHomeSSID / YourMobileHotspot) |
+| `MC_K7_Shelly_SSID` | String | `Wifi.GetStatus` | Connected WiFi name (Devices / AgesenAP) |
 | `MC_K7_Shelly_RSSI` | Number | `Wifi.GetStatus` | WiFi signal in dBm (e.g. -73) |
 
 ### Virtual State Items (no channel binding)
@@ -437,8 +497,8 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 | # | Rule | Trigger | Action |
 |---|------|---------|--------|
 | 1 | K7 Power - System Init | System startup (level 100) | Forces relay OFF, resets to PARKED |
-| 2 | K7 Power - Ignition Handler | `Vehicle10_Ignition` changed | ON: cancel all, RIDING. OFF: check voltage after 10s |
-| 3 | K7 Power - Voltage Monitor | `MC_K7_Shelly_Voltage` changed | Charger detect (>12.8V), disconnect, low battery (<12.0V) |
+| 2 | K7 Power - Ignition Handler | `Vehicle10_Ignition` changed | ON: 30s debounce, then cancel all, RIDING. OFF: if debounce pending, cancel (false trigger); if RIDING, check voltage after 10s |
+| 3 | K7 Power - Voltage Monitor | `MC_K7_Shelly_Voltage` changed | Charger detect (>12.75V), disconnect, low battery (<12.0V) |
 | 4 | K7 Power - Dump Complete | `K7_Dump_Status` changed | "complete": cooldown (30s) then relay OFF |
 | 5 | K7 Power - Shelly WiFi Poll | Cron `0 * * * * ?` (every minute) | HTTP GET to Shelly, updates SSID + RSSI items |
 | 6 | K7 Power - Relay State Tracker | `MC_K7_Relay` changed | Updates `MC_K7_Relay_Since` on ON, clears on OFF (fires for rule-driven and manual commands) |
@@ -467,7 +527,7 @@ The local failsafe (`innovv-k7/shelly-failsafe-script.js`) runs on the Shelly's 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
 | Check interval | 30s | ADC polling frequency |
-| Charger threshold | 12.53V (raw) | Equals 12.8V real minus 0.27V ADC offset |
+| Charger threshold | 12.48V (raw) | Equals 12.75V real minus 0.27V ADC offset |
 | Stabilisation | 3 checks (90s) | Confirm charger is stable |
 | Max ON time | 25 min | Shorter than openHAB's 30 min |
 | Low battery cutoff | 11.5V | Emergency protection |
@@ -532,7 +592,7 @@ The Shelly Plus Uni is powered directly from the motorcycle battery on an always
 - Verify wiring: relay output → K7 DC input
 
 ### Charger not detected
-- Check `MC_K7_Shelly_Voltage` value — should be >12.8V when charger connected
+- Check `MC_K7_Shelly_Voltage` value — should be >12.75V when charger connected
 - Verify `Vehicle10_Ignition` is OFF (or FMM920 not reporting)
 - Check Shelly thing is ONLINE in openHAB
 - Check raw Shelly ADC via `http://192.168.1.62/rpc/Voltmeter.GetStatus?id=100`

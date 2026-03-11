@@ -24,10 +24,10 @@
 Group   gMC_K7_Power                            "K7 Auto-Power"                 <energy>        (gK7, gVehicle10)
 
 // --- Shelly Plus Uni Channels ---
-// Device: shellyplusuni-xxxxxxxxxxxx  IP: 192.168.1.62  MAC: XXXXXXXXXXXX
-Switch  MC_K7_Relay         "K7 Power Relay [MAP(k7_onoff.map):%s]"     <switch>        (gMC_K7_Power)  ["Switch"]      {channel="shelly:shellyplusuni:xxxxxxxxxxxx:relay1#output"}
+// Device: shellyplusuni-xxxxxxxxxxxx  IP: 192.168.1.62  MAC: E08CFE8B1C3C
+Switch  MC_K7_Relay         "K7 Power Relay [MAP(k7_onoff.map):%s]"     <k7-relay-blue> (gMC_K7_Power)  ["Switch"]      {channel="shelly:shellyplusuni:xxxxxxxxxxxx:relay1#output"}
 
-Number:ElectricPotential MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"  <energy>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:sensors#voltage" [profile="system:offset", offset="0.27 V"]}
+Number:ElectricPotential MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"  <k7-battery-green>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:sensors#voltage"}
 
 // --- Shelly Device Status Channels ---
 Number  MC_K7_Shelly_WiFi_Signal "Shelly WiFi [%d /4]"                  <network>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:xxxxxxxxxxxx:device#wifiSignal"}
@@ -41,7 +41,7 @@ String  MC_K7_Shelly_SSID    "Shelly SSID [%s]"                        <network>
 
 // --- Virtual State Items (no channel binding) ---
 String  MC_K7_Power_State   "K7 Power State [%s]"                       <status>        (gMC_K7_Power)  ["Status"]
-Switch  MC_Charger_Detected "Charger Detected [MAP(k7_onoff.map):%s]"   <energy>        (gMC_K7_Power)  ["Status"]
+Switch  MC_Charger_Detected "Charger Detected [MAP(k7_onoff.map):%s]"   <k7-charger-green>        (gMC_K7_Power)  ["Status"]
 String  MC_K7_Power_Reason  "Power Reason [%s]"                         <text>          (gMC_K7_Power)  ["Status"]
 DateTime MC_K7_Relay_Since  "Relay ON Since [%1$tF %1$tR]"              <time>          (gMC_K7_Power)  ["Status"]
 

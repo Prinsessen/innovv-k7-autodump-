@@ -219,7 +219,7 @@ FTP may be the **most reliable method** for bulk file download as it:
 
 ## Connectivity Challenge
 
-The OpenHAB server (`openhab-server`, 192.168.1.10) is a **Hyper-V VM** with only a virtual
+The OpenHAB server (`OpenHab5`, 192.168.1.10) is a **Hyper-V VM** with only a virtual
 `eth0` interface — no WiFi hardware, no USB passthrough. It **cannot** connect
 directly to the K7's WiFi hotspot.
 

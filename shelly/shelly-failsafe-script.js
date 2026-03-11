@@ -33,7 +33,7 @@
 
 // --- Configuration ---
 let CONFIG = {
-  chargerVoltage: 12.53,    // V — raw ADC threshold (12.8V real minus 0.27V offset)
+  chargerVoltage: 13.0,     // V — raw ADC threshold (midpoint battery 12.37 / charger 13.55)
   lowBattVoltage: 11.5,     // V — emergency cutoff
   checkIntervalMs: 30000,   // 30s — ADC polling interval
   stabChecks: 3,            // 3 checks (90s) required to confirm charger
