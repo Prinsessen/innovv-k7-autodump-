@@ -181,8 +181,11 @@ The Shelly relay drives an IRFP9140N P-channel MOSFET as a high-side switch. Thi
      │                                                    │
      │                                               Battery GND
      │
-     └── IRFP9140N Drain (pin 2) ──|>|── SB540 ── ORANGE wire ──> K7 ignition (K7 YELLOW wire)
-                                    (Schottky diode, cathode toward K7)
+     └── IRFP9140N Drain (pin 2) ── ORANGE wire ──┐
+                                                   ├──> K7 ignition (K7 YELLOW wire)
+  Motorcycle ignition 12V ──►|── SB540 ───────────┘
+                            (Schottky diode: anode=ignition, cathode=splice)
+                            (Blocks MOSFET back-feed to ignition circuit/FMM920)
   
   Battery GND ── BLACK wire ────────────> K7 ground (K7 BLACK wire)
 ```
