@@ -471,6 +471,37 @@ class InnovvK7Dump:
                 f"Could not set timestamp on {local_path}: {e}"
             )
 
+    @staticmethod
+    def _find_active_recording_files(files: list[dict]) -> set[str]:
+        """Find the newest file per recording directory — likely being written to.
+
+        The K7 records in segments (~3 min each). While powered on, the newest
+        file in each directory (Movie_E, Movie_F, EMR_E, etc.) is actively being
+        written to by the Novatek firmware. Downloading it mid-write causes HTTP
+        errors or partial/corrupt files.
+
+        Files are identified by their timestamp prefix (e.g. 20260309221222).
+        The newest file per directory per camera (F/R suffix) is skipped.
+
+        Returns a set of remote paths to skip.
+        """
+        # Group files by directory: e.g. "/INNOVVK7/Movie_E" -> [file1, file2, ...]
+        from collections import defaultdict
+        dir_files = defaultdict(list)
+        for f in files:
+            path = f["path"]
+            directory = path.rsplit("/", 1)[0] if "/" in path else ""
+            if directory:
+                dir_files[directory].append(path)
+
+        active = set()
+        for directory, paths in dir_files.items():
+            # Sort by filename (timestamp-based) — newest last
+            paths.sort()
+            if paths:
+                active.add(paths[-1])
+        return active
+
     def run_dump_cycle(self) -> bool:
         """
         Execute one complete dump cycle.
@@ -549,6 +580,20 @@ class InnovvK7Dump:
                 skipped = before - len(files)
                 if skipped:
                     self.log.info(f"Movie_E disabled — skipped {skipped} loop video files")
+
+            # Step 2c: Skip actively-recording files
+            # The K7 records continuously while powered — the newest file in each
+            # recording directory (Movie_E, Movie_F, EMR_E, etc.) is being actively
+            # written to and cannot be reliably downloaded mid-write. Skip it now;
+            # it will be picked up in the next dump cycle once the K7 has moved on
+            # to a new segment.
+            active_files = self._find_active_recording_files(files)
+            if active_files:
+                files = [f for f in files if f["path"] not in active_files]
+                self.log.info(
+                    f"Skipped {len(active_files)} actively-recording file(s): "
+                    + ", ".join(os.path.basename(p) for p in active_files)
+                )
 
             # Step 3: Filter out already-downloaded files
             new_files = [
