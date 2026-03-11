@@ -68,6 +68,7 @@ No manual intervention. Footage is automatically backed up whenever you charge.
 | IRFP9140N | P-channel MOSFET, TO-247 | High-side power switch for K7 |
 | 10K resistor | 1/4W | Gate pull-up (fail-safe OFF) |
 | 100Ω resistor | 1/4W (optional) | Gate inrush limiter |
+| Schottky diode | SB540 (5A/40V) or 1N5822 (3A/40V) | **REQUIRED** — Blocks MOSFET back-feed into ignition circuit |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video |
 | Raspberry Pi 4 | Any RAM variant | Runs the auto-dump service |
 | Battery charger | Any float/maintenance charger | Triggers the dump cycle |
@@ -91,7 +92,8 @@ No manual intervention. Footage is automatically backed up whenever you charge.
      │                                            │
      │                                       Battery GND
      │
-     └── IRFP9140N Drain (pin 2) ──> K7 DC power input (+)
+     └── IRFP9140N Drain (pin 2) ──|>|── SB540 ──> K7 DC power input (+)
+                                  (Schottky diode, cathode toward K7)
 
   Battery GND ─────────────────────> K7 DC power input (-)
 ```
