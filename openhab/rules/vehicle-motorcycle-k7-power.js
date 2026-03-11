@@ -13,7 +13,8 @@ const IGN_DEBOUNCE_S = 30;
 
 const STATES = {
   PARKED: 'PARKED', RIDING: 'RIDING', CHARGING: 'CHARGING',
-  TRANSFERRING: 'TRANSFERRING', COOLDOWN: 'COOLDOWN', LOW_BATTERY: 'LOW_BATTERY'
+  TRANSFERRING: 'TRANSFERRING', COOLDOWN: 'COOLDOWN', DUMP_DONE: 'DUMP_DONE',
+  LOW_BATTERY: 'LOW_BATTERY'
 };
 
 function getState() {
@@ -203,6 +204,12 @@ rules.JSRule({
       if (currentState === STATES.LOW_BATTERY && voltage >= LOW_BATT_V) {
         setState(STATES.PARKED, 'Battery recovered to ' + voltage.toFixed(1) + 'V');
       }
+      // DUMP_DONE: charger removed (voltage dropped) -> re-arm to PARKED
+      if (currentState === STATES.DUMP_DONE && voltage <= CHARGER_V) {
+        console.info(LOG + ': Charger removed after dump (' + voltage.toFixed(1) + 'V) - re-armed');
+        setState(STATES.PARKED, 'Charger removed - re-armed');
+        items.getItem('MC_Charger_Detected').postUpdate('OFF');
+      }
       if (currentState === STATES.PARKED && voltage > CHARGER_V) {
         startChargerSequence(voltage, 'Voltage');
       }
@@ -239,10 +246,12 @@ rules.JSRule({
         var cooldownTimer = actions.ScriptExecution.createTimer(
           time.ZonedDateTime.now().plusSeconds(COOLDOWN_S),
           function () {
-            console.info(LOG + ': Cooldown complete - relay OFF');
+            console.info(LOG + ': Cooldown complete - relay OFF, staying in DUMP_DONE');
             relayOff('Dump complete + cooldown');
-            setState(STATES.PARKED, 'Dump cycle complete');
-            items.getItem('MC_Charger_Detected').postUpdate('OFF');
+            // Stay in DUMP_DONE until charger is removed - prevents
+            // endless dump loops (K7 records while powered, creating
+            // new footage each cycle). Only re-arms when voltage drops.
+            setState(STATES.DUMP_DONE, 'Dump cycle complete - waiting for charger removal');
           }
         );
         cache.private.put('cooldownTimer', cooldownTimer);
@@ -253,6 +262,39 @@ rules.JSRule({
       }
     } catch (e) {
       console.error(LOG + ': Dump handler error: ' + e.message);
+    }
+  }
+});
+
+// =============================================================================
+// Rule 7: Manual Relay Override
+// Allows manual relay ON (e.g. from sitemap) to trigger a dump from DUMP_DONE
+// or PARKED state. Useful when charger is still connected and you want to
+// force another dump without removing/reconnecting the charger.
+// =============================================================================
+rules.JSRule({
+  name: 'K7 Power - Manual Relay Override',
+  description: 'Manual relay ON triggers dump from DUMP_DONE or PARKED',
+  triggers: [triggers.ItemCommandTrigger('MC_K7_Relay', 'ON')],
+  execute: function () {
+    try {
+      var currentState = getState();
+      if (currentState === STATES.DUMP_DONE || currentState === STATES.PARKED) {
+        console.info(LOG + ': Manual relay ON - starting dump from ' + currentState);
+        setState(STATES.TRANSFERRING, 'Manual relay ON');
+        cancelTimer('maxOnTimer');
+        var maxOnTimer = actions.ScriptExecution.createTimer(
+          time.ZonedDateTime.now().plusMinutes(MAX_ON_MIN),
+          function () {
+            console.warn(LOG + ': SAFETY TIMEOUT - relay ON for ' + MAX_ON_MIN + 'min - forcing OFF');
+            relayOff('Safety timeout ' + MAX_ON_MIN + 'min');
+            setState(STATES.DUMP_DONE, 'Safety timeout');
+          }
+        );
+        cache.private.put('maxOnTimer', maxOnTimer);
+      }
+    } catch (e) {
+      console.error(LOG + ': Manual relay error: ' + e.message);
     }
   }
 });
