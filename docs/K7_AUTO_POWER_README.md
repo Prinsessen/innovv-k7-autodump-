@@ -144,13 +144,15 @@ The Shelly relay drives an IRFP9140N P-channel MOSFET as a high-side switch. Thi
 #### MOSFET Circuit (IRFP9140N — P-channel, TO-247)
 
 ```
-  Battery +12V (always-on, fused 3A)
+  Battery +12V ── RED wire (3A inline fuse at battery)
      │
      ├────────────────> Shelly Plus Uni POWER (DC input)
      │
      ├────────────────> Shelly ADC input (Voltmeter:100, voltage sensing)
      │
      ├────────────────> FMM920 power (existing tracker)
+     │
+     ├────────────────> K7 permanent 12V (K7 RED wire) — direct, always on
      │
      ├──── IRFP9140N Source (pin 3)
      │         │
@@ -162,9 +164,98 @@ The Shelly relay drives an IRFP9140N P-channel MOSFET as a high-side switch. Thi
      │                                                    │
      │                                               Battery GND
      │
-     └── IRFP9140N Drain (pin 2) ───────> K7 DC power input (+)
+     └── IRFP9140N Drain (pin 2) ── ORANGE wire ──> K7 ignition (K7 YELLOW wire)
   
-  Battery GND ──────────────────────────> K7 DC power input (-)
+  Battery GND ── BLACK wire ────────────> K7 ground (K7 BLACK wire)
+```
+
+**Wiring Harness — Shelly/MOSFET Pack (3 wires to battery):**
+| Wire | Color | From | To |
+|------|-------|------|----|
+| +12V supply | **RED** | Battery +12V (3A fuse) | Shelly power + MOSFET Source + Shelly ADC |
+| Ground | **BLACK** | Battery GND | Shelly GND + Relay NO |
+| Switched output | **ORANGE** | MOSFET Drain | K7 ignition (spliced to K7 YELLOW) |
+
+**K7 Wiring Harness (3 wires — original from K7):**
+| Wire | Color | Connection |
+|------|-------|------------|
+| Permanent 12V | **RED** | Direct to battery +12V (always on) |
+| Ignition 12V | **YELLOW** | Spliced to **ORANGE** from MOSFET Drain |
+| Ground | **BLACK** | Battery GND |
+
+#### Quick Wiring Reference
+
+```
+ ┌─────────────────────────────────────────────────────────────────────┐
+ │                    IRFP9140N (TO-247)                               │
+ │                   ┌──────────────┐                                  │
+ │                   │  IRFP9140N   │  (face label towards you)        │
+ │                   │              │                                  │
+ │                   │  1    2    3 │                                  │
+ │                   └──┬────┬────┬─┘                                  │
+ │                      │    │    │                                    │
+ │                    GATE DRAIN SOURCE                                │
+ │                      │    │    │                                    │
+ │                      │    │    │                                    │
+ │  BATTERY (+12V) ═══════════════╪═══════════╗  (always-on, fused 3A)│
+ │       ║              │    │    ║            ║                       │
+ │       ║              │    │    ╠═══[10K]════╣                       │
+ │       ║              │    │    ║  pull-up   ║                       │
+ │       ║              │    │    ║  resistor  ║                       │
+ │       ║              │    │  SOURCE         ║                       │
+ │       ║              │    │         to Shelly Plus Uni:             │
+ │       ║              │    │           ║──> DC Power (+)             │
+ │       ║              │    │           ║──> ADC Input (voltage sense)│
+ │       ║              │   DRAIN                                     │
+ │       ║              │    │                                        │
+ │       ║              │    └──────> ORANGE wire ──> K7 YELLOW (ign)  │
+ │       ║              │                                             │
+ │       ║            GATE                                            │
+ │       ║              │                                             │
+ │       ║           [100Ω]  (optional gate resistor)                 │
+ │       ║              │                                             │
+ │       ║              └──────────> Shelly Relay1 COM                │
+ │       ║                                                            │
+ │       ║                           Shelly Relay1 NO ──┐             │
+ │       ║                                              │             │
+ │  BATTERY GND ════════════════════════════════════════╧═══════════╗ │
+ │       ║                                                          ║ │
+ │       ║              to Shelly Plus Uni:                         ║ │
+ │       ║                ║──> DC Power (-)                         ║ │
+ │       ║                                                          ║ │
+ │       ╠══════════════════════════> K7 Ground (K7 BLACK wire)     ║ │
+ │       ║                                                          ║ │
+ │       ║              to K7:                                      ║ │
+ │       ║                ══════════> K7 Permanent (K7 RED wire)    ║ │
+ │       ║                           (direct from Battery +12V)    ║ │
+ │                                                                  ║ │
+ └──────────────────────────────────────────────────────────────────║─┘
+
+ STEP-BY-STEP WIRING ORDER:
+ ══════════════════════════
+ 1. MOSFET Source (pin 3) ──── Battery +12V (RED wire, 3A fuse at battery)
+ 2. 10K resistor ──────────── between Source (pin 3) and Gate (pin 1)
+ 3. 100Ω resistor ─────────── from Gate (pin 1) to Shelly Relay1 COM
+ 4. Shelly Relay1 NO ──────── Battery GND (BLACK wire)
+ 5. MOSFET Drain (pin 2) ──── ORANGE wire ──> splice to K7 YELLOW (ignition)
+ 6. Battery +12V ──────────── K7 Permanent (K7 RED wire) — direct, no MOSFET!
+ 7. Battery GND ───────────── K7 Ground (K7 BLACK wire)
+ 8. Battery +12V ──────────── Shelly DC power (+) (from RED wire)
+ 9. Battery GND ───────────── Shelly DC power (-) (from BLACK wire)
+ 10. Battery +12V ─────────── Shelly ADC input (voltage sensing)
+
+ WIRE COLORS FROM SHELLY/MOSFET PACK:
+   RED    = +12V from battery (fused 3A)   — to Shelly + MOSFET Source
+   BLACK  = GND from battery               — to Shelly + Relay NO
+   ORANGE = MOSFET Drain output            — to K7 ignition (K7 YELLOW)
+
+ K7 ORIGINAL WIRES:
+   RED    = permanent +12V                 — direct to battery (unchanged)
+   YELLOW = ignition +12V                  — spliced to ORANGE from MOSFET
+   BLACK  = ground                         — direct to battery (unchanged)
+
+ RELAY OFF  = Gate at +12V (via 10K) = MOSFET OFF = no ignition = K7 off
+ RELAY ON   = Gate at GND            = MOSFET ON  = ignition on = K7 on
 ```
 
 #### How it works
@@ -284,7 +375,7 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 
 | Item | Type | Source | Purpose |
 |------|------|--------|---------|
-| `MC_K7_Shelly_SSID` | String | `Wifi.GetStatus` | Connected WiFi name (Devices / YourMobileHotspot) |
+| `MC_K7_Shelly_SSID` | String | `Wifi.GetStatus` | Connected WiFi name (YourHomeSSID / YourMobileHotspot) |
 | `MC_K7_Shelly_RSSI` | Number | `Wifi.GetStatus` | WiFi signal in dBm (e.g. -73) |
 
 ### Virtual State Items (no channel binding)
