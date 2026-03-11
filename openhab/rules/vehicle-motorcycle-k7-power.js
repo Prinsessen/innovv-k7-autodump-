@@ -122,10 +122,18 @@ rules.JSRule({
               return;
             }
             var currentState = getState();
-            // If relay is ON for charger/transfer, ignition signal is MOSFET back-feed — ignore
-            if (currentState === STATES.CHARGING || currentState === STATES.TRANSFERRING || currentState === STATES.COOLDOWN) {
-              console.info(LOG + ': Ignition suppressed - back-feed from MOSFET (state: ' + currentState + ')');
+            // If relay is ON, ignition signal during transfer/cooldown is MOSFET back-feed — ignore
+            // During CHARGING relay is OFF (no back-feed possible) so real ignition is allowed through
+            var relayIsOn = items.getItem('MC_K7_Relay').state === 'ON';
+            if (relayIsOn && (currentState === STATES.TRANSFERRING || currentState === STATES.COOLDOWN)) {
+              console.info(LOG + ': Ignition suppressed - back-feed from MOSFET (relay ON, state: ' + currentState + ')');
               return;
+            }
+            // During CHARGING (relay OFF), cancel stab timer — this is real ignition, not charger
+            if (currentState === STATES.CHARGING) {
+              console.info(LOG + ': Real ignition during CHARGING - cancelling charger sequence');
+              cancelTimer('stabTimer');
+              items.getItem('MC_Charger_Detected').postUpdate('OFF');
             }
             console.info(LOG + ': Ignition confirmed ON after ' + IGN_DEBOUNCE_S + 's debounce');
             cancelTimer('stabTimer');
