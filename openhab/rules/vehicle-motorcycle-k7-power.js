@@ -4,11 +4,12 @@
 const { rules, triggers, items, actions, time } = require('openhab');
 
 const LOG = 'k7_power';
-const CHARGER_V   = 12.8;
+const CHARGER_V   = 13.0;
 const LOW_BATT_V  = 12.0;
 const STAB_SEC    = 60;
 const MAX_ON_MIN  = 30;
 const COOLDOWN_S  = 30;
+const IGN_DEBOUNCE_S = 30;
 
 const STATES = {
   PARKED: 'PARKED', RIDING: 'RIDING', CHARGING: 'CHARGING',
@@ -97,26 +98,55 @@ rules.JSRule({
   }
 });
 
-// Rule 2: Ignition Handler
+// Rule 2: Ignition Handler (debounced)
+// The K7 MOSFET output shares the ignition-switched circuit. When the relay
+// toggles, the FMM920 sees brief false ignition ON/OFF events (~5-10s).
+// A 30s debounce filters these; real riding keeps ignition ON for minutes.
 rules.JSRule({
   name: 'K7 Power - Ignition Handler',
-  description: 'Handles ignition ON/OFF for K7 power state machine',
+  description: 'Handles ignition ON/OFF with debounce to filter MOSFET-induced false triggers',
   triggers: [triggers.ItemStateChangeTrigger('Vehicle10_Ignition')],
   execute: function () {
     try {
       var ignition = items.getItem('Vehicle10_Ignition').state;
-      var currentState = getState();
 
       if (ignition === 'ON') {
-        cancelTimer('stabTimer');
-        cancelTimer('maxOnTimer');
-        cancelTimer('cooldownTimer');
-        if (currentState === STATES.CHARGING || currentState === STATES.TRANSFERRING) {
-          relayOff('Ignition ON overrides charger');
-        }
-        setState(STATES.RIDING, 'Ignition ON');
-        items.getItem('MC_Charger_Detected').postUpdate('OFF');
+        console.info(LOG + ': Ignition ON detected - debouncing ' + IGN_DEBOUNCE_S + 's');
+        cancelTimer('ignDebounceTimer');
+        var debounceTimer = actions.ScriptExecution.createTimer(
+          time.ZonedDateTime.now().plusSeconds(IGN_DEBOUNCE_S),
+          function () {
+            var recheck = items.getItem('Vehicle10_Ignition').state;
+            if (recheck !== 'ON') {
+              console.info(LOG + ': Ignition debounce expired but ignition now OFF - ignoring');
+              return;
+            }
+            console.info(LOG + ': Ignition confirmed ON after ' + IGN_DEBOUNCE_S + 's debounce');
+            var currentState = getState();
+            cancelTimer('stabTimer');
+            cancelTimer('maxOnTimer');
+            cancelTimer('cooldownTimer');
+            if (currentState === STATES.CHARGING || currentState === STATES.TRANSFERRING || currentState === STATES.COOLDOWN) {
+              relayOff('Ignition ON overrides charger');
+            }
+            setState(STATES.RIDING, 'Ignition ON');
+            items.getItem('MC_Charger_Detected').postUpdate('OFF');
+          }
+        );
+        cache.private.put('ignDebounceTimer', debounceTimer);
       } else if (ignition === 'OFF') {
+        // If debounce timer is pending, cancel it - ignition was too brief
+        var pending = cache.private.get('ignDebounceTimer');
+        if (pending !== null && pending !== undefined) {
+          console.info(LOG + ': Ignition OFF before debounce expired - false trigger filtered');
+          cancelTimer('ignDebounceTimer');
+          return;
+        }
+        var currentState = getState();
+        if (currentState !== STATES.RIDING) {
+          console.info(LOG + ': Ignition OFF but not RIDING (' + currentState + ') - ignoring');
+          return;
+        }
         console.info(LOG + ': Ignition OFF - checking voltage');
         setState(STATES.PARKED, 'Ignition OFF');
         var checkTimer = actions.ScriptExecution.createTimer(
