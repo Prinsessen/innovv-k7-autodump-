@@ -123,6 +123,12 @@ rules.JSRule({
               return;
             }
             var currentState = getState();
+            // DUMP_DONE means charger is connected and dump finished — ignore ignition
+            // (FMM920 sends buffered positions with stale ignition=true from earlier rides)
+            if (currentState === STATES.DUMP_DONE) {
+              console.info(LOG + ': Ignition suppressed - DUMP_DONE state (buffered Traccar data)');
+              return;
+            }
             // If relay is ON, ignition signal during transfer/cooldown is MOSFET back-feed — ignore
             // During CHARGING relay is OFF (no back-feed possible) so real ignition is allowed through
             var relayIsOn = items.getItem('MC_K7_Relay').state === 'ON';
