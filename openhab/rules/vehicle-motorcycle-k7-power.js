@@ -28,7 +28,7 @@ const LOW_BATT_V  = 12.0;
 const STAB_SEC    = 60;
 const MAX_ON_MIN  = 30;
 const COOLDOWN_S  = 30;
-const IGN_DEBOUNCE_S = 30;
+const IGN_DEBOUNCE_S = 5;
 
 const STATES = {
   PARKED: 'PARKED', RIDING: 'RIDING', CHARGING: 'CHARGING',
@@ -267,12 +267,12 @@ rules.JSRule({
 });
 
 // Rule 2: Ignition Handler (debounced)
-// The K7 MOSFET output shares the ignition-switched circuit. When the relay
-// toggles, the FMM920 sees brief false ignition ON/OFF events (~5-10s).
-// A 30s debounce filters these; real riding keeps ignition ON for minutes.
+// With 1N4007 diode installed (2026-03-12), MOSFET back-feed to FMM920 is
+// physically blocked. A short 5s debounce remains for generic ignition noise.
+// Real riding keeps ignition ON for minutes.
 rules.JSRule({
   name: 'K7 Power - Ignition Handler',
-  description: 'Handles ignition ON/OFF with debounce to filter MOSFET-induced false triggers',
+  description: 'Handles ignition ON/OFF with 5s debounce (diode blocks MOSFET back-feed)',
   triggers: [triggers.ItemStateChangeTrigger('Vehicle10_Ignition')],
   execute: function () {
     try {
@@ -294,11 +294,8 @@ rules.JSRule({
               console.info(LOG + ': Ignition suppressed - DUMP_DONE state (buffered Traccar data)');
               return;
             }
-            var relayIsOn = items.getItem('MC_K7_Relay').state === 'ON';
-            if (relayIsOn && (currentState === STATES.TRANSFERRING || currentState === STATES.COOLDOWN)) {
-              console.info(LOG + ': Ignition suppressed - back-feed from MOSFET (relay ON, state: ' + currentState + ')');
-              return;
-            }
+            // MOSFET back-feed check removed 2026-03-12: 1N4007 diode physically blocks it.
+            // If ignition is ON during TRANSFERRING/COOLDOWN with relay ON, it's real ignition.
             if (currentState === STATES.CHARGING) {
               console.info(LOG + ': Real ignition during CHARGING - cancelling charger sequence');
               cancelTimer('stabTimer');
