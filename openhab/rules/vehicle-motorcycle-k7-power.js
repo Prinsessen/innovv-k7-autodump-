@@ -255,9 +255,18 @@ rules.JSRule({
       items.getItem('MC_Charger_Detected').postUpdate('ON');
       startChargerSequence(voltage, 'System init BLE=' + getBLEState());
     } else if (bleOnline && !bleCharging) {
+      // BLE online but Idle/Off \u2014 charger powered but not charging battery
       console.info(LOG + ': Init: BLE online but ' + getBLEState() + ' \u2014 charger powered, not charging');
-      setState(STATES.PARKED, 'System start - charger powered but ' + getBLEState());
-      items.getItem('MC_Charger_Detected').postUpdate('OFF');
+      // Preserve DUMP_DONE across script reloads during Float\u2194Idle oscillation
+      var prevState = items.getItem('MC_K7_Power_State').state;
+      if (prevState === STATES.DUMP_DONE) {
+        console.info(LOG + ': Init: preserving DUMP_DONE (previous state was DUMP_DONE, charger still connected)');
+        setState(STATES.DUMP_DONE, 'System start - preserved DUMP_DONE (BLE online, ' + getBLEState() + ')');
+        items.getItem('MC_Charger_Detected').postUpdate('ON');
+      } else {
+        setState(STATES.PARKED, 'System start - charger powered but ' + getBLEState());
+        items.getItem('MC_Charger_Detected').postUpdate('OFF');
+      }
     } else if (voltage > CHARGER_ON_V) {
       console.info(LOG + ': Init: no BLE, voltage ' + voltage.toFixed(1) + 'V > ' + CHARGER_ON_V + 'V \u2014 fallback charger detect');
       items.getItem('MC_Charger_Detected').postUpdate('ON');
