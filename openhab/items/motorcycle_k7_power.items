@@ -61,3 +61,15 @@ Number   MC_Charger_Yield        "Charged Energy [%.3f kWh]"           <energy> 
 String   MC_Charger_State        "Charger State [%s]"                    <heating>       (gMC_K7_Power)  ["Status"]
 DateTime MC_Charger_Last_Update  "Charger Updated [%1$td.%1$tm %1$tH:%1$tM]" <time>     (gMC_K7_Power)  ["Status"]
 
+// --- Charge Session History (persisted to InfluxDB) ---
+// Updated by vehicle-motorcycle-k7-charge-history.js on each charge cycle.
+DateTime MC_Charge_Session_Start   "Session Start [%1$td.%1$tm %1$tH:%1$tM]"  <time>      (gMC_K7_Power)  ["Status"]
+DateTime MC_Charge_Session_End     "Session End [%1$td.%1$tm %1$tH:%1$tM]"    <time>      (gMC_K7_Power)  ["Status"]
+Number   MC_Charge_Session_Minutes "Session Duration [%.0f min]"              <time>      (gMC_K7_Power)  ["Measurement"]
+Number   MC_Charge_Session_V_Start "Start Voltage [%.2f V]"                   <energy>    (gMC_K7_Power)  ["Measurement"]
+Number   MC_Charge_Session_V_End   "End Voltage [%.2f V]"                     <energy>    (gMC_K7_Power)  ["Measurement"]
+Number   MC_Charge_Session_V_Delta "Voltage Change [%.2f V]"                  <energy>    (gMC_K7_Power)  ["Measurement"]
+Number   MC_Charge_Session_Wh      "Energy Charged [%.1f Wh]"                <energy>    (gMC_K7_Power)  ["Measurement"]
+String   MC_Charge_Session_Peak    "Peak Stage [%s]"                          <energy>    (gMC_K7_Power)  ["Status"]
+Number   MC_Charge_Session_Count   "Total Sessions [%.0f]"                    <none>      (gMC_K7_Power)  ["Measurement"]
+
