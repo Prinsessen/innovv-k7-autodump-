@@ -149,7 +149,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | Shelly Plus Uni | SNSN-0043X (Gen 2) | Relay + ADC voltage (Voltmeter:100) + WiFi | Mounted on motorcycle |
 | IRFP9140N | P-channel MOSFET, -100V/-23A, TO-247 | High-side power switch for K7 | Inline in K7 wiring harness |
 | 10K resistor | 1/4W, any tolerance | Gate pull-up (fail-safe OFF) | Soldered to MOSFET |
-| Schottky diode | SB540 (5A/40V) or 1N5822 (3A/40V) | **REQUIRED** — Blocks MOSFET back-feed into ignition circuit | Inline on ignition wire before K7/MOSFET splice |
+| 1N4007 diode | Silicon rectifier, 1A/1000V, 0.7V Vf | **INSTALLED** — Blocks MOSFET back-feed into ignition circuit | Inline on ignition wire before K7/MOSFET splice |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video | Mounted on motorcycle |
 | Teltonika FMM920 | GPS tracker (866088075183606) | Ignition state + battery voltage | Mounted on motorcycle |
 | Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Charges battery, PRIMARY charger detection via BLE | Garage |
@@ -233,7 +233,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | Low battery cutoff | 12.0V | Protects battery from deep discharge |
 | Charger ON threshold | 13.0V (raw ADC) | Detect charger connecting (fallback) |
 | Charger OFF threshold | 12.7V (raw ADC) | Confirm charger truly removed (fallback) |
-| Ignition debounce | 30 seconds | Filters MOSFET back-feed false triggers to FMM920 |
+| Ignition debounce | 30 seconds | Filters MOSFET back-feed false triggers to FMM920 (diode installed 2026-03-12 — may be reducible) |
 | Post-dump cooldown | 30 seconds | Clean K7 shutdown after dump |
 | Re-arm grace period | 5 minutes | Suppresses voltage-only false retrigger after charger disconnect |
 | BLE offline threshold | ~90 seconds | 3 consecutive BLE failures = charger mains removed |
@@ -269,9 +269,10 @@ The Shelly relay drives an IRFP9140N P-channel MOSFET as a high-side switch. Thi
      │
      └── IRFP9140N Drain (pin 2) ── ORANGE wire ──┐
                                                    ├──> K7 ignition (K7 YELLOW wire)
-  Motorcycle ignition 12V ──►|── SB540 ───────────┘
-                            (Schottky diode: anode=ignition, cathode=splice)
+  Motorcycle ignition 12V ──►|── 1N4007 ──────────┘
+                            (1N4007: anode=ignition, cathode=K7/MOSFET splice)
                             (Blocks MOSFET back-feed to ignition circuit/FMM920)
+                            (Installed 2026-03-12, verified working)
   
   Battery GND ── BLACK wire ────────────> K7 ground (K7 BLACK wire)
 ```
