@@ -634,16 +634,26 @@ rules.JSRule({
         var existingTimer = cache.private.get('disconnectTimer');
         if (existingTimer === null || existingTimer === undefined) {
           console.info(LOG + ': BLE state ' + bleState + ' in DUMP_DONE \u2014 starting 5-min disconnect timer [' + getBLEInfo() + ']');
-          var dt = actions.ScriptExecution.createTimer(time.ZonedDateTime.now().plusMinutes(5), function () {
+          function disconnectCheck() {
             cache.private.put('disconnectTimer', null);
             var st = getState();
-            if (st === STATES.DUMP_DONE) {
-              console.info(LOG + ': Disconnect timer fired \u2014 battery confirmed disconnected, re-arming to PARKED');
-              rearmToParked('BLE Idle 5min \u2014 battery disconnected');
-            } else {
+            if (st !== STATES.DUMP_DONE) {
               console.info(LOG + ': Disconnect timer fired but state is ' + st + ' \u2014 ignoring');
+              return;
             }
-          });
+            // Check voltage: if still above charger threshold, mains is still connected
+            // \u2014 the Victron is just sitting in Idle on a full battery. Stay DUMP_DONE.
+            var v = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
+            if (v > CHARGER_ON_V) {
+              console.info(LOG + ': Disconnect timer fired but V=' + v.toFixed(1) + 'V (>' + CHARGER_ON_V + ') \u2014 charger mains still connected, restarting timer');
+              var newDt = actions.ScriptExecution.createTimer(time.ZonedDateTime.now().plusMinutes(5), disconnectCheck);
+              cache.private.put('disconnectTimer', newDt);
+              return;
+            }
+            console.info(LOG + ': Disconnect timer fired \u2014 V=' + v.toFixed(1) + 'V confirms battery disconnected, re-arming to PARKED');
+            rearmToParked('BLE Idle 5min + V=' + v.toFixed(1) + ' \u2014 battery disconnected');
+          }
+          var dt = actions.ScriptExecution.createTimer(time.ZonedDateTime.now().plusMinutes(5), disconnectCheck);
           cache.private.put('disconnectTimer', dt);
         } else {
           console.info(LOG + ': BLE state ' + bleState + ' in DUMP_DONE \u2014 disconnect timer already running [' + getBLEInfo() + ']');
