@@ -181,8 +181,11 @@ class VictronBLEMonitor:
           Bulk:       below all setpoints, max current, voltage rising
           Recondition: >15.0V (desulfation pulse)
 
-        Current level does NOT determine phase — the charger can push
-        several amps at Float voltage if the battery demands it.
+        CRITICAL: Voltage setpoint matching takes priority over current level.
+        In Storage/Float modes with a full battery, the charger holds the
+        setpoint voltage with near-zero current (<50mA). This is NOT idle —
+        the charger is actively regulating. "Idle" only applies when voltage
+        doesn't match any setpoint AND current is low.
 
         Voltage stability (history) distinguishes Bulk (voltage rising through
         a setpoint zone) from actually being AT a setpoint.
@@ -190,9 +193,7 @@ class VictronBLEMonitor:
         if voltage is None:
             return "Unknown"
 
-        # No current flowing = Idle (battery disconnected or fully charged)
-        if current_ma is not None and current_ma < 50:
-            return "Idle"
+        low_current = current_ma is not None and current_ma < 50
 
         # Reconditioning / Equalization: voltage pushed very high
         if voltage >= self.V_RECONDITION:
@@ -201,29 +202,40 @@ class VictronBLEMonitor:
         # Check if voltage is stable (not rising through a zone during Bulk)
         is_stable = self._is_voltage_stable()
 
-        # Match voltage to nearest setpoint using tolerance bands
-        # Check from highest setpoint downward
+        # Match voltage to nearest setpoint using tolerance bands.
+        # Setpoint matching takes priority over current level — the charger
+        # actively maintains voltage at these setpoints even with near-zero
+        # current (e.g. Storage at 13.2V on a full battery draws <50mA).
+        # Check from highest setpoint downward.
         if abs(voltage - self.V_ABSORPTION) <= self.V_SETPOINT_TOL:
             # In absorption zone (14.1 - 14.7V)
             return "Absorption"
         elif abs(voltage - self.V_FLOAT) <= self.V_SETPOINT_TOL:
             # In float zone (13.5 - 14.1V)
-            if is_stable:
+            if low_current:
+                return "Float"  # Holding float setpoint with minimal current
+            elif is_stable:
                 return "Float"
             else:
                 # Voltage still rising through this zone → Bulk
                 return "Bulk"
         elif abs(voltage - self.V_STORAGE) <= self.V_SETPOINT_TOL:
             # In storage zone (12.9 - 13.5V)
-            if is_stable:
+            if low_current:
+                return "Storage"  # Holding storage setpoint with minimal current
+            elif is_stable:
                 return "Storage"
             else:
                 return "Bulk"
         elif voltage < self.V_STORAGE - self.V_SETPOINT_TOL:
-            # Below all setpoints — battery is being charged up
+            # Below all setpoints
+            if low_current:
+                return "Idle"  # No setpoint match + no current = truly idle
             return "Bulk"
         else:
-            # Fallback for gaps between zones
+            # Between setpoint zones
+            if low_current:
+                return "Idle"
             return "Bulk"
 
     def _is_voltage_stable(self) -> bool:
