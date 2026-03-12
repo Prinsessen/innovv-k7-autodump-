@@ -96,9 +96,15 @@ The system uses **two independent sensors** for charger detection, with BLE as t
 
 A Pi 4 daemon (`victron-ble-monitor`) connects to the Victron Blue Smart IP65 12/10 charger via BLE GATT every 30 seconds, reading the actual charge state (Bulk/Absorption/Float/Storage/Idle/Off). This is 100% accurate — no voltage threshold guessing.
 
-- **BLE Online + Charging** (Bulk/Absorption/Float/Storage) = charger actively charging battery
-- **BLE Online + Idle/Off** = charger has mains power but battery cable not connected to bike
+- **BLE Online + Charging** (Bulk/Absorption/Float/Recondition) = charger actively charging battery
+- **BLE Online + Connected** (Storage/Idle) = charger has mains power, battery may be connected but fully charged
+- **BLE Online + Off** = charger has mains power but battery cable not connected to bike
 - **BLE Offline** = charger unplugged from mains (BLE radio shuts off)
+
+**Three detection tiers** (used by post-ignition check, `startChargerSequence`, and stabilisation):
+1. `isBLECharging()` — Active charging: Bulk/Absorption/Float/Recondition (highest confidence)
+2. `isBLEConnected()` — Charger connected: all of above + Storage/Idle (charger sees a battery or is on mains)
+3. Voltage > CHARGER_ON_V — Fallback when BLE is offline
 
 See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab) repository for full BLE daemon documentation.
 
@@ -114,12 +120,13 @@ When the BLE daemon is unavailable, the system falls back to Shelly ADC voltage:
 
 | Scenario | BLE | Voltage | Decision |
 |----------|-----|---------|----------|
-| BLE confirms charging | Bulk/Absorption/Float/Storage | Any | **Start charger sequence** (BLE authoritative) |
-| BLE online, not charging | Idle/Off | > 13.0V | **Suppress** — charger has mains but no battery |
+| BLE confirms charging | Bulk/Absorption/Float/Recondition | Any | **Start charger sequence** (BLE authoritative) |
+| BLE confirms connected | Storage/Idle | Any | **Start charger sequence** (BLE connected — full battery or just clipped) |
+| BLE online, not charging/connected | Off | > 13.0V | **Suppress** — charger has mains but state unclear |
 | BLE offline | N/A | > 13.0V | **Fallback** — use voltage threshold |
 | BLE offline | N/A | < 12.7V | **No charger** |
-| Stabilisation check | BLE online + charging | Any | **Confirm** (BLE authority) |
-| Stabilisation check | BLE online + NOT charging | Any | **Reject** — false positive |
+| Stabilisation check | BLE online + charging OR connected | Any | **Confirm** (BLE authority) |
+| Stabilisation check | BLE online + NOT charging/connected | Any | **Reject** — false positive |
 | Stabilisation check | BLE offline | > 13.0V | **Confirm** (voltage fallback) |
 
 ### Grace Period (Re-arm Suppression)
@@ -180,7 +187,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | **CHARGING** | OFF | Charger detected (BLE or voltage), 60s stabilisation in progress |
 | **TRANSFERRING** | ON | K7 powered, waiting for Pi file transfer to complete |
 | **COOLDOWN** | OFF→ | Dump complete, 30s cooldown before relay OFF |
-| **DUMP_DONE** | OFF | Dump cycle completed, charger still connected — prevents re-triggering |
+| **DUMP_DONE** | OFF | Dump cycle completed, ready for next ride — ignition ON allowed (→ RIDING) |
 | **PARKED** | OFF | Normal parked state (no charger connected) |
 | **LOW_BATTERY** | OFF | Battery < 12.0V — relay forced off |
 
@@ -196,27 +203,34 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
     │                    ▼              "complete"
     │                 PARKED                  ▼
     │                                    COOLDOWN ──(30s)──► DUMP_DONE
-    │                                                          │
-    │                                              BLE Idle/Off│
-    │                                              or V<12.7V  │
-    │                                                          ▼
-    │◄─────────────────────────────────────────────────────── PARKED
-    │                                                    (5min grace)
+    │                                                     │         │
+    │                                         BLE Idle/Off│         │Ignition ON
+    │                                         or V<12.7V  │         │
+    │                                                     ▼         ▼
+    │◄──────────────────────────────────────────────── PARKED    RIDING
+    │                                              (5min grace)    │
+    │                                                              │
+    │◄─────────────────────────────────(Ignition OFF)──────────────┘
     │   V<12.0V
     └── LOW_BATTERY ◄──── (any state)
 ```
 
-**Charger detection** uses dual sensors:
-- **BLE charging** (Bulk/Absorption/Float/Storage) → immediate start
+**Charger detection** uses three tiers:
+- **BLE charging** (Bulk/Absorption/Float/Recondition) → immediate start
+- **BLE connected** (Storage/Idle) → immediate start (full battery goes straight to Storage)
 - **Voltage > 13.0V** (fallback when no BLE) → start with grace period check
 
-**Stabilisation** (60s) rechecks using the same dual-sensor priority:
-- BLE online + charging → **confirmed**
-- BLE online + NOT charging → **rejected** (false positive)
+**Stabilisation** (60s) rechecks using the same three-tier priority:
+- BLE online + charging OR connected → **confirmed**
+- BLE online + NOT charging/connected → **rejected** (false positive)
 - BLE offline + voltage > 13.0V → **confirmed** (fallback)
 
-**DUMP_DONE re-arm** triggers when:
-- BLE state changes to Idle/Off (battery disconnected from charger) — **immediate, authoritative**
+**DUMP_DONE → RIDING** when ignition turns ON:
+- Charger cable removal is undetectable by BLE (charger stays on mains, reports Storage with no load)
+- User unclips cable → ignition ON → rides. System allows DUMP_DONE → RIDING transition.
+
+**DUMP_DONE re-arm** to PARKED triggers when:
+- BLE state changes to Off (charger reports no battery) — **immediate, authoritative**
 - BLE goes Offline (charger mains unplugged) — **immediate**
 - Voltage drops < 12.7V AND BLE not actively charging — **fallback**
 
@@ -586,14 +600,14 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 | # | Rule | Trigger | Action |
 |---|------|---------|--------|
 | 1 | System Init | System startup (level 100) | Relay OFF, voltage-aware + BLE-aware state selection, `updateChargerConnection()` |
-| 2 | Ignition Handler | `Vehicle10_Ignition` changed | 30s debounce, MOSFET back-feed suppression during TRANSFERRING/COOLDOWN, DUMP_DONE suppression |
+| 2 | Ignition Handler | `Vehicle10_Ignition` changed | 30s debounce, MOSFET back-feed suppression during TRANSFERRING/COOLDOWN, DUMP_DONE → RIDING allowed |
 | 3 | Voltage Monitor | `MC_K7_Shelly_Voltage` changed | Charger detect (>13.0V), charger removed (<12.7V, only when BLE not charging), low battery (<12.0V) |
 | 4 | Dump Complete | `K7_Dump_Status` changed | Cooldown (30s) then relay OFF → DUMP_DONE |
 | 5 | Shelly WiFi Poll | Cron every minute | HTTP GET to Shelly API, updates SSID + RSSI |
 | 6 | Relay State Tracker | `MC_K7_Relay` changed | Updates `MC_K7_Relay_Since` on ON, clears on OFF |
 | 7 | Manual Relay Override | `MC_K7_Relay` command ON | Manual relay ON triggers dump from DUMP_DONE or PARKED |
 | 8 | BLE Charger Online | `MC_Charger_BLE_Online` changed | BLE ON: start charger sequence if PARKED + charging. BLE OFF: re-arm if DUMP_DONE, cancel if CHARGING |
-| 9 | BLE Charge State | `MC_Charger_State` changed | Idle/Off → re-arm from DUMP_DONE. Bulk/Absorption/Float → start sequence from PARKED |
+| 9 | BLE Charge State | `MC_Charger_State` changed | Off → re-arm from DUMP_DONE. Bulk/Absorption/Float/Storage/Idle → start sequence from PARKED |
 | 10 | Charger Connection Status | `MC_Charger_BLE_Online` or `MC_Charger_State` changed | Computes `MC_Charger_Connection` string |
 
 ### Key Helper Functions
@@ -601,7 +615,8 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 | Function | Purpose |
 |----------|---------|
 | `isBLEOnline()` | Charger has mains power (BLE radio active + fresh data < 3min) |
-| `isBLECharging()` | Charger actively charging battery (Bulk/Absorption/Float/Storage + fresh) |
+| `isBLECharging()` | Charger actively charging battery (Bulk/Absorption/Float/Recondition + fresh) |
+| `isBLEConnected()` | Charger connected to battery or on mains (Bulk/Absorption/Float/Storage/Recondition/Idle + fresh) |
 | `isBLEFresh()` | BLE data updated within last 3 minutes (uses `toMinutes()`) |
 | `getBLEState()` | Returns BLE charge state string or null |
 | `getBLEInfo()` | Returns formatted BLE info string for log enrichment |
@@ -737,6 +752,16 @@ for i in items:
 ```
 
 ## Changelog
+
+### v3 — 2026-03-12: Storage/Idle Detection + DUMP_DONE Ride Allowance
+- **`isBLEConnected()` function**: New middle tier — includes Storage/Idle (charger on mains, battery may be full)
+- **Three-tier charger detection**: `isBLECharging()` → `isBLEConnected()` → voltage fallback
+- **Post-ignition 3-tier check**: After ignition OFF, detects Storage (full battery on charger) not just active charging
+- **DUMP_DONE → RIDING**: Ignition ON now allowed from DUMP_DONE (charger cable removal undetectable by BLE)
+- **Rule 9 expanded**: Storage/Idle in PARKED now triggers dump sequence (full battery goes straight to Storage)
+- **`startChargerSequence` gate**: Accepts `isBLEConnected()` — no longer rejects Storage/Idle
+- **Stabilisation confirmation**: Accepts BLE connected states (Storage/Idle), not just active charging
+- **Reason text**: "waiting for charger removal" → "ready for next ride" (matches real-world workflow)
 
 ### v2 — 2026-03-12: Dual-Sensor BLE Integration
 - **Dual-sensor charger detection**: BLE primary, voltage fallback
