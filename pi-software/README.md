@@ -253,7 +253,7 @@ To restore: `gunzip -c backup.img.gz | dd of=/dev/sdX bs=4M`
 | Component | How | Location |
 |-----------|-----|----------|
 | Dump service | systemd enabled | `/etc/systemd/system/innovv-k7-dump.service` |
-| NAS mount | fstab nofail | `//your-nas-server/...` → `/mnt/nas/dashcam` |
+| NAS mount | fstab nofail | `//Rackstation2.agesen.dk/...` → `/mnt/nas/dashcam` |
 | NAS credentials | file | `/root/.nas-creds` (mode 0600) |
 | Download DB | SQLite | `/opt/innovv-k7/downloaded_files.db` |
 | Config | JSON | `/opt/innovv-k7/config.json` |
