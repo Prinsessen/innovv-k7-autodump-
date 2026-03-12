@@ -248,7 +248,7 @@ rules.JSRule({
     // no need to re-trigger. Will re-arm when charger truly disconnects.
     var existingState = getState();
     if (existingState === STATES.DUMP_DONE) {
-      console.info(LOG + ': Init: Preserving DUMP_DONE \u2014 dump already completed, waiting for charger removal');
+      console.info(LOG + ': Init: Preserving DUMP_DONE \u2014 dump already completed, ready for next ride');
       updateChargerConnection();
       return;
     }
@@ -464,7 +464,7 @@ rules.JSRule({
           function () {
             console.info(LOG + ': Cooldown complete - relay OFF, staying in DUMP_DONE');
             relayOff('Dump complete + cooldown');
-            setState(STATES.DUMP_DONE, 'Dump cycle complete - waiting for charger removal');
+            setState(STATES.DUMP_DONE, 'Dump cycle complete - ready for next ride');
           }
         );
         cache.private.put('cooldownTimer', cooldownTimer);
@@ -648,10 +648,12 @@ rules.JSRule({
       console.info(LOG + ': BLE State changed to ' + bleState + ' [V=' + voltage.toFixed(1) + 'V, state=' + currentState + ']');
 
       var chargingStates = ['Bulk', 'Absorption', 'Float', 'Recondition'];
+      var connectedStates = ['Bulk', 'Absorption', 'Float', 'Storage', 'Recondition', 'Idle'];
       var isCharging = chargingStates.indexOf(bleState) >= 0;
+      var isConnected = connectedStates.indexOf(bleState) >= 0;
 
-      if (isCharging && currentState === STATES.PARKED) {
-        console.info(LOG + ': BLE ' + bleState + ' while PARKED \u2014 charger active, starting sequence');
+      if ((isCharging || isConnected) && currentState === STATES.PARKED) {
+        console.info(LOG + ': BLE ' + bleState + ' while PARKED \u2014 charger detected, starting sequence');
         startChargerSequence(voltage, 'BLE ' + bleState);
       } else if (isCharging && currentState === STATES.DUMP_DONE) {
         // Cancel any pending disconnect timer \u2014 charger is clearly still connected
