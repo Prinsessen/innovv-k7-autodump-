@@ -293,6 +293,7 @@ rules.JSRule({
         var debounceTimer = actions.ScriptExecution.createTimer(
           time.ZonedDateTime.now().plusSeconds(IGN_DEBOUNCE_S),
           function () {
+            cache.private.put('ignDebounceTimer', null);  // Clear so OFF handler works
             var recheck = items.getItem('Vehicle10_Ignition').state;
             if (recheck !== 'ON') {
               console.info(LOG + ': Ignition debounce expired but ignition now OFF - ignoring');
