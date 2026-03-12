@@ -68,9 +68,9 @@ rules.JSRule({
         var endV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
         var endYield = parseFloat(items.getItem('MC_Charger_Yield').state) || 0;
 
-        // Calculate duration
+        // Calculate duration using epoch millis (avoids GraalJS proxy crash)
         var startTime = time.ZonedDateTime.parse(startStr);
-        var durationMs = java.time.Duration.between(startTime, endTime).toMillis();
+        var durationMs = endTime.toInstant().toEpochMilli() - startTime.toInstant().toEpochMilli();
         var durationMin = durationMs / 60000.0;
 
         // Calculate energy (Wh)

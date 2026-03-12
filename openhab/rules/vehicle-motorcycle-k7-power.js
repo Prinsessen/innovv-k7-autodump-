@@ -87,7 +87,7 @@ function isBLEOnline() {
 function isBLECharging() {
   try {
     var st = items.getItem('MC_Charger_State').state;
-    return ['Bulk', 'Absorption', 'Float', 'Storage', 'Recondition'].indexOf(st) >= 0 && isBLEFresh();
+    return ['Bulk', 'Absorption', 'Float', 'Recondition'].indexOf(st) >= 0 && isBLEFresh();
   } catch (e) { return false; }
 }
 
@@ -626,7 +626,7 @@ rules.JSRule({
 
       console.info(LOG + ': BLE State changed to ' + bleState + ' [V=' + voltage.toFixed(1) + 'V, state=' + currentState + ']');
 
-      var chargingStates = ['Bulk', 'Absorption', 'Float', 'Storage', 'Recondition'];
+      var chargingStates = ['Bulk', 'Absorption', 'Float', 'Recondition'];
       var isCharging = chargingStates.indexOf(bleState) >= 0;
 
       if (isCharging && currentState === STATES.PARKED) {
