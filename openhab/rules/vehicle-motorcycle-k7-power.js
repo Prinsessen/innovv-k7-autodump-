@@ -132,7 +132,7 @@ function updateChargerConnection() {
       if (chargingStates.indexOf(bleState) >= 0) {
         status = 'Charging \u2014 ' + bleState;
       } else {
-        status = 'Standby (cable detached)';
+        status = 'Standby (idle)';
       }
     }
     items.getItem('MC_Charger_Connection').postUpdate(status);
@@ -231,6 +231,15 @@ rules.JSRule({
   execute: function () {
     console.info(LOG + ': System start - initializing');
     relayOff('System start');
+
+    // Preserve DUMP_DONE across script reloads \u2014 dump already done,
+    // no need to re-trigger. Will re-arm when charger truly disconnects.
+    var existingState = getState();
+    if (existingState === STATES.DUMP_DONE) {
+      console.info(LOG + ': Init: Preserving DUMP_DONE \u2014 dump already completed, waiting for charger removal');
+      updateChargerConnection();
+      return;
+    }
 
     var powerItem = items.getItem('MC_K7_Shelly_Voltage');
     var voltage = (!powerItem.isUninitialized && powerItem.state !== 'NULL')
@@ -521,8 +530,8 @@ rules.JSRule({
     if (relayState === 'ON') {
       // Counter-punch: relay ON while DUMP_DONE or COOLDOWN = external (Shelly failsafe)
       var currentState = getState();
-      if (currentState === STATES.DUMP_DONE || currentState === STATES.COOLDOWN) {
-        console.info(LOG + ': Relay ON detected in ' + currentState + ' - external source (Shelly failsafe) - counter-punching OFF');
+      if (currentState === STATES.DUMP_DONE || currentState === STATES.COOLDOWN || currentState === STATES.PARKED || currentState === STATES.CHARGING) {
+        console.info(LOG + ': Relay ON detected in ' + currentState + ' - unexpected, counter-punching OFF');
         items.getItem('MC_K7_Relay').sendCommand('OFF');
         return;  // Don't update Relay_Since for the brief blip
       }
@@ -573,6 +582,7 @@ rules.JSRule({
         console.info(LOG + ': BLE Offline - V=' + voltage.toFixed(1) + 'V, state=' + currentState);
 
         if (currentState === STATES.DUMP_DONE) {
+          cancelTimer('disconnectTimer');
           console.info(LOG + ': BLE Offline in DUMP_DONE \u2014 definitive charger removal, re-arming to PARKED');
           rearmToParked('BLE Offline \u2014 charger mains removed');
         } else if (currentState === STATES.CHARGING) {
@@ -613,16 +623,35 @@ rules.JSRule({
         console.info(LOG + ': BLE ' + bleState + ' while PARKED \u2014 charger active, starting sequence');
         startChargerSequence(voltage, 'BLE ' + bleState);
       } else if (isCharging && currentState === STATES.DUMP_DONE) {
-        console.info(LOG + ': BLE ' + bleState + ' while DUMP_DONE \u2014 charger re-started, staying DUMP_DONE');
+        // Cancel any pending disconnect timer \u2014 charger is clearly still connected
+        cancelTimer('disconnectTimer');
+        console.info(LOG + ': BLE ' + bleState + ' while DUMP_DONE \u2014 charger active, staying DUMP_DONE (disconnect timer cancelled)');
       } else if ((bleState === 'Off' || bleState === 'Idle') && currentState === STATES.DUMP_DONE) {
-        console.info(LOG + ': BLE state ' + bleState + ' in DUMP_DONE \u2014 battery disconnected, re-arming to PARKED [' + getBLEInfo() + ']');
-        rearmToParked('BLE ' + bleState + ' \u2014 battery disconnected');
+        // Victron oscillates Float\u2194Idle on a fully charged battery.
+        // Don't immediately re-arm \u2014 use a 5-min timer to confirm true disconnect.
+        // If Float returns within 5 min, cancel the timer (it was just oscillation).
+        var existingTimer = cache.private.get('disconnectTimer');
+        if (existingTimer === null || existingTimer === undefined) {
+          console.info(LOG + ': BLE state ' + bleState + ' in DUMP_DONE \u2014 starting 5-min disconnect timer [' + getBLEInfo() + ']');
+          var dt = actions.ScriptExecution.createTimer(time.ZonedDateTime.now().plusMinutes(5), function () {
+            cache.private.put('disconnectTimer', null);
+            var st = getState();
+            if (st === STATES.DUMP_DONE) {
+              console.info(LOG + ': Disconnect timer fired \u2014 battery confirmed disconnected, re-arming to PARKED');
+              rearmToParked('BLE Idle 5min \u2014 battery disconnected');
+            } else {
+              console.info(LOG + ': Disconnect timer fired but state is ' + st + ' \u2014 ignoring');
+            }
+          });
+          cache.private.put('disconnectTimer', dt);
+        } else {
+          console.info(LOG + ': BLE state ' + bleState + ' in DUMP_DONE \u2014 disconnect timer already running [' + getBLEInfo() + ']');
+        }
       } else if ((bleState === 'Off' || bleState === 'Idle') && currentState === STATES.CHARGING) {
-        // Charger went Idle/Off during stabilisation - cancel and re-arm.
-        // This happens when Victron oscillates Float/Idle on a fully charged battery.
-        console.info(LOG + ': BLE state ' + bleState + ' during CHARGING - cancelling stabilisation [' + getBLEInfo() + ']');
-        cancelTimer('stabTimer');
-        rearmToParked('BLE ' + bleState + ' during stabilisation');
+        // Victron oscillates Float\u2194Idle on a fully charged battery.
+        // Don't cancel stab timer \u2014 let it run and check BLE state at expiry.
+        // If BLE is charging at expiry \u2192 relay ON. If Idle/Off \u2192 back to PARKED.
+        console.info(LOG + ': BLE state ' + bleState + ' during CHARGING \u2014 stab timer still running [' + getBLEInfo() + ']');
       }
     } catch (e) {
       console.error(LOG + ': BLE state handler error: ' + e.message);
