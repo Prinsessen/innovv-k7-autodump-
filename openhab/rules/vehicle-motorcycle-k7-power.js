@@ -617,6 +617,12 @@ rules.JSRule({
       } else if ((bleState === 'Off' || bleState === 'Idle') && currentState === STATES.DUMP_DONE) {
         console.info(LOG + ': BLE state ' + bleState + ' in DUMP_DONE \u2014 battery disconnected, re-arming to PARKED [' + getBLEInfo() + ']');
         rearmToParked('BLE ' + bleState + ' \u2014 battery disconnected');
+      } else if ((bleState === 'Off' || bleState === 'Idle') && currentState === STATES.CHARGING) {
+        // Charger went Idle/Off during stabilisation - cancel and re-arm.
+        // This happens when Victron oscillates Float/Idle on a fully charged battery.
+        console.info(LOG + ': BLE state ' + bleState + ' during CHARGING - cancelling stabilisation [' + getBLEInfo() + ']');
+        cancelTimer('stabTimer');
+        rearmToParked('BLE ' + bleState + ' during stabilisation');
       }
     } catch (e) {
       console.error(LOG + ': BLE state handler error: ' + e.message);
