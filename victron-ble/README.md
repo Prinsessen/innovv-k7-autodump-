@@ -260,9 +260,10 @@ The BLE charger data is the **primary sensor** for the INNOVV K7 auto-dump state
 ### Key Integration Points
 
 - **`MC_Charger_BLE_Online`** — Triggers Rule 8 (BLE Charger Online). BLE ON + charging → start dump sequence. BLE OFF → re-arm from DUMP_DONE.
-- **`MC_Charger_State`** — Triggers Rule 9 (BLE Charge State). Idle/Off → re-arm to PARKED. Bulk/Absorption/Float → start dump sequence.
+- **`MC_Charger_State`** — Triggers Rule 9 (BLE Charge State). Off → re-arm to PARKED. Bulk/Absorption/Float/Storage/Idle → start dump sequence from PARKED (full battery may go straight to Storage).
 - **`MC_Charger_Connection`** — Computed by Rule 10 from BLE Online + State. Displayed in sitemap.
-- **Stabilisation authority** — During 60s stabilisation, BLE online + not charging = reject (false positive from voltage spike).
+- **Stabilisation authority** — During 60s stabilisation, BLE online + `isBLEConnected()` (charging OR Storage/Idle) = confirm. BLE online + not connected = reject (false positive from voltage spike).
+- **Three detection tiers** — `isBLECharging()` (active) → `isBLEConnected()` (Storage/Idle included) → voltage fallback. Used in post-ignition check, `startChargerSequence`, and stabilisation.
 - **Grace period** — After re-arm to PARKED, voltage-only charger detection suppressed for 5 minutes (battery voltage lingers > 13.0V). BLE always overrides.
 
 ### MC_Charger_Connection States
