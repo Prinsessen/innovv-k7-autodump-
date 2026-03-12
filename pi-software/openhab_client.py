@@ -22,7 +22,7 @@ class OpenHABClient:
 
     def __init__(
         self,
-        base_url: str = "http://192.168.1.10:8080",
+        base_url: str = "http://10.0.5.21:8080",
         item_prefix: str = "K7_",
     ):
         self.base_url = base_url.rstrip("/")

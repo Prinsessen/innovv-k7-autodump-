@@ -50,7 +50,7 @@ class WiFiManager:
         self.wpa_conf_dir = wpa_conf_dir
         # Auto-detected from scan results (updated by is_ssid_visible)
         self._detected_freq: str | None = None   # e.g. "5180" or "2437"
-        self._detected_bssid: str | None = None   # e.g. "XX:XX:XX:XX:XX:XX"
+        self._detected_bssid: str | None = None   # e.g. "64:82:14:4c:bb:d8"
 
     def _run(self, cmd: list, timeout: int = 15) -> subprocess.CompletedProcess:
         """Run a shell command and return result."""

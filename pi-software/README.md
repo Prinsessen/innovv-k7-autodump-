@@ -32,7 +32,7 @@ The Pi 4 uses **dual networking**:
 | WiFi | RTL8821CS, 5 GHz ch 36, WPA2-PSK CCMP |
 | SSID | `INNOVV_K7` |
 | Password | `12345678` |
-| BSSID | `XX:XX:XX:XX:XX:XX` |
+| BSSID | `64:82:14:4C:BB:D8` |
 | IP | `192.168.1.254` |
 | HTTP port | 80 |
 | API | Novatek CarDV (`/?custom=1&cmd=<CMD>`) |
@@ -120,7 +120,7 @@ sudo update-alternatives --set cyfmac43455-sdio.bin \
 
 | Interface | Purpose | IP | Config |
 |-----------|---------|-----|--------|
-| eth0 | Home LAN (NAS, OpenHAB) | DHCP (192.168.1.60) | Default route |
+| eth0 | Home LAN (NAS, OpenHAB) | DHCP (10.0.5.60) | Default route |
 | wlan0 | K7 WiFi (downloads) | Static 192.168.1.100/24 | No default route |
 
 wlan0 is isolated from dhcpcd via `denyinterfaces wlan0` to prevent
@@ -253,7 +253,7 @@ To restore: `gunzip -c backup.img.gz | dd of=/dev/sdX bs=4M`
 | Component | How | Location |
 |-----------|-----|----------|
 | Dump service | systemd enabled | `/etc/systemd/system/innovv-k7-dump.service` |
-| NAS mount | fstab nofail | `//your-nas-server/...` → `/mnt/nas/dashcam` |
+| NAS mount | fstab nofail | `//Rackstation2.agesen.dk/...` → `/mnt/nas/dashcam` |
 | NAS credentials | file | `/root/.nas-creds` (mode 0600) |
 | Download DB | SQLite | `/opt/innovv-k7/downloaded_files.db` |
 | Config | JSON | `/opt/innovv-k7/config.json` |
@@ -287,7 +287,7 @@ To restore: `gunzip -c backup.img.gz | dd of=/dev/sdX bs=4M`
         "delete_after_verified_download": true
     },
     "openhab": {
-        "url": "http://192.168.1.10:8080"
+        "url": "http://10.0.5.21:8080"
     },
     "safety": {
         "max_dump_duration_min": 30,
