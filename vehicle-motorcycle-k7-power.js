@@ -163,14 +163,15 @@ function startChargerSequence(voltage, source) {
   var currentState = getState();
   if (currentState !== STATES.PARKED) return;
 
-  // Accept if BLE confirms charging OR voltage above threshold (fallback)
+  // Accept if BLE confirms charging/connected OR voltage above threshold (fallback)
   var bleCharging = isBLECharging();
-  if (!bleCharging && voltage <= CHARGER_ON_V) return;
+  var bleConnected = isBLEConnected();
+  if (!bleCharging && !bleConnected && voltage <= CHARGER_ON_V) return;
 
   // Grace period: after re-arm from charger-active state, battery voltage
   // lingers above CHARGER_ON_V for minutes. Suppress voltage-only detection
-  // for 5 min. BLE charging confirmation overrides immediately.
-  if (!bleCharging) {
+  // for 5 min. BLE charging/connected confirmation overrides immediately.
+  if (!bleCharging && !bleConnected) {
     var rearmTime = cache.private.get('rearmTime');
     if (rearmTime !== null && rearmTime !== undefined) {
       var sinceRearm = time.Duration.between(rearmTime, time.ZonedDateTime.now()).toMinutes();
@@ -193,18 +194,20 @@ function startChargerSequence(voltage, source) {
       var recheck = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
       var bleOnline = isBLEOnline();
       var bleChg = isBLECharging();
+      var bleCon = isBLEConnected();
 
       // PRIMARY: BLE is authoritative when online — trust completely
+      //   Accept charging OR connected (Storage/Idle = charger still present)
       // FALLBACK: No BLE available, use voltage threshold
       var confirmed;
       if (bleOnline) {
-        confirmed = bleChg;  // BLE online: only confirm if actively charging
+        confirmed = bleChg || bleCon;  // BLE online: confirm if charger connected in any state
       } else {
         confirmed = recheck > CHARGER_ON_V;  // No BLE: voltage fallback
       }
 
       if (confirmed) {
-        var method = bleChg ? 'BLE ' + items.getItem('MC_Charger_State').state : 'Voltage ' + recheck.toFixed(1) + 'V (no BLE)';
+        var method = (bleChg || bleCon) ? 'BLE ' + items.getItem('MC_Charger_State').state : 'Voltage ' + recheck.toFixed(1) + 'V (no BLE)';
         console.info(LOG + ': Stabilisation complete [' + method + '] [' + getBLEInfo() + '] V=' + recheck.toFixed(1) + 'V - relay ON');
         setState(STATES.TRANSFERRING, 'Charger confirmed: ' + method);
         relayOn('Charger confirmed: ' + method);
@@ -318,9 +321,10 @@ rules.JSRule({
               return;
             }
             var currentState = getState();
+            // DUMP_DONE: dump is complete, allow riding. Post-ignition check
+            // will re-detect charger and trigger another dump if needed.
             if (currentState === STATES.DUMP_DONE) {
-              console.info(LOG + ': Ignition suppressed - DUMP_DONE state (buffered Traccar data)');
-              return;
+              console.info(LOG + ': Ignition ON in DUMP_DONE \u2014 dump already complete, allowing ride');
             }
             // MOSFET back-feed check removed 2026-03-12: 1N4007 diode physically blocks it.
             // If ignition is ON during TRANSFERRING/COOLDOWN with relay ON, it's real ignition.
@@ -357,10 +361,14 @@ rules.JSRule({
           function () {
             var v = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
             var bleChg = isBLECharging();
+            var bleCon = isBLEConnected();
             console.info(LOG + ': Post-ignition check: V=' + v.toFixed(1) + 'V [' + getBLEInfo() + ']');
             if (bleChg) {
               console.info(LOG + ': Post-ignition: BLE confirms charging \u2014 starting charger sequence');
               startChargerSequence(v, 'Post-ignition BLE=' + getBLEState());
+            } else if (bleCon) {
+              console.info(LOG + ': Post-ignition: BLE charger connected (' + getBLEState() + ') \u2014 starting charger sequence');
+              startChargerSequence(v, 'Post-ignition BLE-connected=' + getBLEState());
             } else if (v > CHARGER_ON_V) {
               console.info(LOG + ': Post-ignition: voltage ' + v.toFixed(1) + 'V \u2014 fallback charger detect');
               startChargerSequence(v, 'Post-ignition voltage');
