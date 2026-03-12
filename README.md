@@ -78,6 +78,11 @@ The system uses **two independent sensors** to detect charger presence, eliminat
 | **Victron BLE** (primary) | Reads actual charger state | Pi daemon connects via BLE GATT every 30s |
 | **Shelly ADC** (fallback) | Voltage threshold detection | >13.0V = charger, <12.7V = removed |
 
+**Three detection tiers:**
+1. `isBLECharging()` — Active charging (Bulk/Absorption/Float/Recondition)
+2. `isBLEConnected()` — Charger connected (above + Storage/Idle — full battery goes to Storage)
+3. Voltage > 13.0V — Fallback when BLE offline
+
 **Why dual-sensor?** Voltage alone is unreliable — the charger's Storage stage (~13.0V) sits right at the detection threshold, and battery voltage lingers above 13.0V for minutes after charger removal. BLE provides the ground truth.
 
 See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab) repository for the BLE daemon.
@@ -226,6 +231,7 @@ cp openhab/transform/*.map  /etc/openhab/transform/
 2. Watch the state machine: `tail -f /var/log/openhab/openhab.log | grep k7_power`
 3. States should progress: `PARKED → CHARGING → TRANSFERRING → COOLDOWN → DUMP_DONE`
 4. Disconnect battery cable → BLE reports Idle → system re-arms to `PARKED`
+5. Ignition ON from `DUMP_DONE` → transitions to `RIDING` (charger cable removal undetectable by BLE)
 
 ## State Machine
 
@@ -236,7 +242,7 @@ cp openhab/transform/*.map  /etc/openhab/transform/
 | **CHARGING** | OFF | Charger detected (BLE or voltage), 60s stabilisation |
 | **TRANSFERRING** | ON | K7 powered, Pi downloading footage |
 | **COOLDOWN** | OFF→ | Dump complete, 30s cooldown |
-| **DUMP_DONE** | OFF | Cycle complete, charger still connected |
+| **DUMP_DONE** | OFF | Cycle complete, ready for next ride — ignition ON allowed (→ RIDING) |
 | **LOW_BATTERY** | OFF | Battery < 12.0V — relay forced off |
 
 ### Rules (10 JSRules)
@@ -244,14 +250,14 @@ cp openhab/transform/*.map  /etc/openhab/transform/
 | # | Rule | Trigger |
 |---|------|---------|
 | 1 | System Init | Startup — relay OFF, state recovery |
-| 2 | Ignition Handler | Ignition changed — 30s debounce |
+| 2 | Ignition Handler | Ignition changed — 30s debounce, DUMP_DONE → RIDING |
 | 3 | Voltage Monitor | ADC voltage changed — charger/low battery detect |
 | 4 | Dump Complete | Dump status changed — cooldown & relay OFF |
 | 5 | WiFi Poll | Cron (1 min) — Shelly SSID/RSSI |
 | 6 | Relay Tracker | Relay changed — timestamp tracking |
 | 7 | Manual Override | Relay command — manual dump trigger |
 | 8 | BLE Online | BLE Online changed — charger presence |
-| 9 | BLE Charge State | Charge state changed — Idle→re-arm, Charging→start |
+| 9 | BLE Charge State | Charge state changed — Off→re-arm, Charging/Storage/Idle→start |
 | 10 | Connection Status | BLE items changed — MC_Charger_Connection string |
 
 ## Safety Features
