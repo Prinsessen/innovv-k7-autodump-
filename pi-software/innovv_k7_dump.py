@@ -386,6 +386,10 @@ class InnovvK7Dump:
                 )
                 continue
 
+            # Throttle: K7 Novatek httpd crashes after ~8 rapid deletes
+            if deleted_count > 0:
+                time.sleep(0.5)
+
             if self.k7.delete_file(remote_path):
                 self._mark_deleted_from_k7(remote_path)
                 deleted_count += 1
@@ -400,7 +404,7 @@ class InnovvK7Dump:
         if deleted_count:
             self.log.info(
                 f"Pending deletes complete: {deleted_count}/{len(pending)} "
-                f"deleted from K7 (rapid burst)"
+                f"deleted from K7"
             )
         self._report_db_stats()
 
@@ -806,16 +810,16 @@ class InnovvK7Dump:
                 self.openhab.update_status("deleting from K7")
                 del_ok = 0
                 del_fail = 0
-                # Fire all deletes as a rapid burst.  The K7 accepts
-                # the delete requests fine; it's the SUBSEQUENT activity
-                # (downloads, heartbeats) that finds the httpd dead
-                # because the SD card maintenance triggers a deferred
-                # crash.  So: burst all deletes, then let the cycle end
-                # and the httpd can recover during the WiFi disconnect.
+                # Throttled deletes — the K7 Novatek httpd crashes
+                # after ~8 rapid-fire deletes.  A 500ms delay between
+                # requests keeps the server stable.
                 for remote_path in verified_for_deletion:
                     if not self.running:
                         self.log.info("Shutdown requested, stopping batch delete")
                         break
+                    # Throttle: avoid crashing K7 httpd
+                    if del_ok > 0:
+                        time.sleep(0.5)
                     if self.k7.delete_file(remote_path):
                         self._mark_deleted_from_k7(remote_path)
                         del_ok += 1
