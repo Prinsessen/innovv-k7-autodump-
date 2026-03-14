@@ -21,7 +21,7 @@
 // Thing:  shelly:shellyplusuni:a1b2c3d4e5f6
 // =============================================================================
 
-Group   gMC_K7_Power                            "K7 Auto-Power"                 <energy>        (gK7, gVehicle10)
+Group   gMC_K7_Power                            "K7 Auto-Power"                 <energy>        (gK7)   ["Equipment"]
 
 // --- Shelly Plus Uni Channels ---
 // Device: shellyplusuni-a1b2c3d4e5f6  IP: 192.168.1.62  MAC: A1B2C3D4E5F6

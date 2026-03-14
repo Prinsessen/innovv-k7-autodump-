@@ -1,0 +1,82 @@
+// =============================================================================
+// K7 Dashcam + Victron Charger — Sitemap Extract
+// =============================================================================
+// This is an EXTRACT of the K7/Victron-relevant frames from the full sitemap.
+// In production, these are embedded in the main myhouse.sitemap.
+// Adapt Frame labels and indentation to fit your sitemap structure.
+// =============================================================================
+
+// --- INNOVV K7 Dashcam ---
+Frame label="INNOVV K7 Dashcam" {
+    Text label="INNOVV K7 Dashcam" icon="k7-cam-blue" {
+        Frame label="Status" {
+            Text item=K7_Dump_Status label="Dump Status [%s]" icon="k7-sync-blue"
+            Text item=K7_Camera_Online label="K7 Online [%s]" icon="k7-online-green"
+            Text item=K7_Last_Dump label="Last Dump [%1$td.%1$tm.%1$tY %1$tH:%1$tM]" icon="k7-time-blue"
+            Text item=K7_Last_Error label="Last Error [%s]" icon="k7-alert-red" visibility=[K7_Last_Error!="NULL", K7_Last_Error!=""]
+        }
+        Frame label="WiFi Connection" {
+            Text item=K7_WiFi_Signal label="Signal [%s]" icon="k7-wifi-cyan"
+            Text item=K7_WiFi_Band label="Band [%s]" icon="k7-band-teal"
+        }
+        Frame label="Download Progress" {
+            Text item=K7_Transfer_Speed label="Transfer Speed [%s]" icon="k7-speed-blue" visibility=[K7_Transfer_Speed!="NULL", K7_Transfer_Speed!=""]
+            Text item=K7_Files_On_Camera label="Files on Camera [%d]" icon="k7-sdcard-orange"
+            Text item=K7_Files_Downloaded label="Files Downloaded [%d]" icon="k7-download-green"
+            Text item=K7_MB_Downloaded label="MB Downloaded [%.1f MB]" icon="k7-data-blue"
+        }
+        Frame label="Verified Transfers" {
+            Text item=K7_Files_Verified label="Verified on NAS [%d]" icon="k7-verified-green"
+            Text item=K7_Files_Deleted label="Deleted from K7 [%d]" icon="k7-delete-red"
+            Text item=K7_Pending_Deletes label="Pending Deletes [%d]" icon="k7-pending-orange"
+        }
+        Frame label="Settings" {
+            Switch item=K7_Dump_Movie_E label="Dump Loop Video (Movie_E)" icon="k7-movie-orange" mappings=[ON="Enabled", OFF="Disabled"]
+        }
+        Frame label="Storage Health" {
+            Text item=K7_NAS_Free_GB label="NAS Free [%.0f GB]" icon="k7-disk-cyan"
+            Text item=K7_Pi_Disk_Free_MB label="Pi SD Free [%d MB]" icon="k7-disk-cyan"
+        }
+        Frame label="K7 Auto-Power (Shelly)" {
+            Text item=MC_K7_Power_State label="Power State [%s]" icon="k7-sync-blue"
+            Switch item=MC_K7_Relay label="K7 Relay" icon="k7-relay-blue" mappings=[ON="ON", OFF="OFF"]
+            Text item=MC_Charger_Connection label="Charger [%s]" icon="k7-charger-green"
+            Text item=MC_K7_Shelly_Voltage label="Battery Voltage [%.2f V]" icon="k7-battery-green"
+            Text item=MC_K7_Power_Reason label="Reason [%s]" icon="k7-sync-blue" visibility=[MC_K7_Power_Reason!="NULL", MC_K7_Power_Reason!=""]
+            Text item=MC_K7_Relay_Since label="Relay ON Since [%1$td.%1$tm %1$tH:%1$tM]" icon="k7-time-blue" visibility=[MC_K7_Relay_Since!="NULL"]
+        }
+        Frame label="Shelly Device Status" {
+            Text item=MC_K7_Shelly_SSID label="WiFi Network [%s]" icon="shelly-wifi-teal"
+            Text item=MC_K7_Shelly_WiFi_Signal label="WiFi Signal [%d /4]" icon="shelly-signal-cyan"
+            Text item=MC_K7_Shelly_RSSI label="RSSI [%d dBm]" icon="shelly-rssi-blue"
+            Text item=MC_K7_Shelly_Uptime label="Uptime [%.0f s]" icon="shelly-uptime-green"
+            Text item=MC_K7_Shelly_Heartbeat label="Heartbeat [%1$td.%1$tm %1$tH:%1$tM]" icon="shelly-heart-red"
+            Text item=MC_K7_Shelly_LastUpdate label="Last Update [%1$td.%1$tm %1$tH:%1$tM]" icon="shelly-refresh-orange"
+        }
+    }
+}
+
+// --- Victron Charger ---
+Frame label="Victron Charger" {
+    Text label="Victron Charger" icon="victron-charger-blue" {
+        Frame label="Battery Status" {
+            Text item=MC_Charger_Voltage label="Battery Voltage [%.2f V]" icon="k7-battery-green"
+            Text item=MC_Charger_Current label="Charge Current [%.2f A]" icon="victron-current-amber"
+            Text item=MC_Charger_Current_mA label="Charge Current [%d mA]" icon="victron-current-amber"
+            Text item=MC_Charger_State label="Charger State [%s]" icon="victron-state-teal"
+        }
+        Frame label="Energy" {
+            Text item=MC_Charger_Yield label="Charged Energy [%.3f kWh]" icon="victron-yield-green"
+        }
+        Frame label="Connection" {
+            Text item=MC_Charger_Connection label="Connection [%s]" icon="victron-plug-blue"
+            Text item=MC_Charger_BLE_Online label="BLE Online [MAP(k7_onoff.map):%s]" icon="victron-bluetooth-blue"
+            Text item=MC_Charger_Last_Update label="Last Update [%1$td.%1$tm %1$tH:%1$tM]" icon="k7-time-blue"
+        }
+        Frame label="Last Charge Session" {
+            Text item=MC_Charge_Session_Start label="Start [%1$td.%1$tm %1$tH:%1$tM]" icon="k7-time-blue"
+            Text item=MC_Charge_Session_End label="End [%1$td.%1$tm %1$tH:%1$tM]" icon="k7-time-blue"
+            Text item=MC_Charge_Session_Minutes label="Duration [%.0f min]" icon="k7-time-blue"
+        }
+    }
+}

@@ -91,6 +91,15 @@ function isBLECharging() {
   } catch (e) { return false; }
 }
 
+// Returns true if BLE reports ANY charger-connected state (including Storage/Idle)
+// Used to prevent false "charger removed" when charger is in maintenance mode
+function isBLEConnected() {
+  try {
+    var st = items.getItem('MC_Charger_State').state;
+    return ['Bulk', 'Absorption', 'Float', 'Storage', 'Recondition', 'Idle'].indexOf(st) >= 0 && isBLEFresh();
+  } catch (e) { return false; }
+}
+
 // Returns true if BLE data was updated within the last 3 minutes
 // (daemon polls every 30s — 3min = 6 missed polls = definitely stale)
 function isBLEFresh() {
@@ -154,14 +163,15 @@ function startChargerSequence(voltage, source) {
   var currentState = getState();
   if (currentState !== STATES.PARKED) return;
 
-  // Accept if BLE confirms charging OR voltage above threshold (fallback)
+  // Accept if BLE confirms charging/connected OR voltage above threshold (fallback)
   var bleCharging = isBLECharging();
-  if (!bleCharging && voltage <= CHARGER_ON_V) return;
+  var bleConnected = isBLEConnected();
+  if (!bleCharging && !bleConnected && voltage <= CHARGER_ON_V) return;
 
   // Grace period: after re-arm from charger-active state, battery voltage
   // lingers above CHARGER_ON_V for minutes. Suppress voltage-only detection
-  // for 5 min. BLE charging confirmation overrides immediately.
-  if (!bleCharging) {
+  // for 5 min. BLE charging/connected confirmation overrides immediately.
+  if (!bleCharging && !bleConnected) {
     var rearmTime = cache.private.get('rearmTime');
     if (rearmTime !== null && rearmTime !== undefined) {
       var sinceRearm = time.Duration.between(rearmTime, time.ZonedDateTime.now()).toMinutes();
@@ -184,18 +194,20 @@ function startChargerSequence(voltage, source) {
       var recheck = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
       var bleOnline = isBLEOnline();
       var bleChg = isBLECharging();
+      var bleCon = isBLEConnected();
 
       // PRIMARY: BLE is authoritative when online — trust completely
+      //   Accept charging OR connected (Storage/Idle = charger still present)
       // FALLBACK: No BLE available, use voltage threshold
       var confirmed;
       if (bleOnline) {
-        confirmed = bleChg;  // BLE online: only confirm if actively charging
+        confirmed = bleChg || bleCon;  // BLE online: confirm if charger connected in any state
       } else {
         confirmed = recheck > CHARGER_ON_V;  // No BLE: voltage fallback
       }
 
       if (confirmed) {
-        var method = bleChg ? 'BLE ' + items.getItem('MC_Charger_State').state : 'Voltage ' + recheck.toFixed(1) + 'V (no BLE)';
+        var method = (bleChg || bleCon) ? 'BLE ' + items.getItem('MC_Charger_State').state : 'Voltage ' + recheck.toFixed(1) + 'V (no BLE)';
         console.info(LOG + ': Stabilisation complete [' + method + '] [' + getBLEInfo() + '] V=' + recheck.toFixed(1) + 'V - relay ON');
         setState(STATES.TRANSFERRING, 'Charger confirmed: ' + method);
         relayOn('Charger confirmed: ' + method);
@@ -236,7 +248,7 @@ rules.JSRule({
     // no need to re-trigger. Will re-arm when charger truly disconnects.
     var existingState = getState();
     if (existingState === STATES.DUMP_DONE) {
-      console.info(LOG + ': Init: Preserving DUMP_DONE \u2014 dump already completed, waiting for charger removal');
+      console.info(LOG + ': Init: Preserving DUMP_DONE \u2014 dump already completed, ready for next ride');
       updateChargerConnection();
       return;
     }
@@ -309,9 +321,10 @@ rules.JSRule({
               return;
             }
             var currentState = getState();
+            // DUMP_DONE: dump is complete, allow riding. Post-ignition check
+            // will re-detect charger and trigger another dump if needed.
             if (currentState === STATES.DUMP_DONE) {
-              console.info(LOG + ': Ignition suppressed - DUMP_DONE state (buffered Traccar data)');
-              return;
+              console.info(LOG + ': Ignition ON in DUMP_DONE \u2014 dump already complete, allowing ride');
             }
             // MOSFET back-feed check removed 2026-03-12: 1N4007 diode physically blocks it.
             // If ignition is ON during TRANSFERRING/COOLDOWN with relay ON, it's real ignition.
@@ -348,10 +361,14 @@ rules.JSRule({
           function () {
             var v = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
             var bleChg = isBLECharging();
+            var bleCon = isBLEConnected();
             console.info(LOG + ': Post-ignition check: V=' + v.toFixed(1) + 'V [' + getBLEInfo() + ']');
             if (bleChg) {
               console.info(LOG + ': Post-ignition: BLE confirms charging \u2014 starting charger sequence');
               startChargerSequence(v, 'Post-ignition BLE=' + getBLEState());
+            } else if (bleCon) {
+              console.info(LOG + ': Post-ignition: BLE charger connected (' + getBLEState() + ') \u2014 starting charger sequence');
+              startChargerSequence(v, 'Post-ignition BLE-connected=' + getBLEState());
             } else if (v > CHARGER_ON_V) {
               console.info(LOG + ': Post-ignition: voltage ' + v.toFixed(1) + 'V \u2014 fallback charger detect');
               startChargerSequence(v, 'Post-ignition voltage');
@@ -397,9 +414,11 @@ rules.JSRule({
       if (currentState === STATES.DUMP_DONE && voltage <= CHARGER_OFF_V) {
         if (isBLECharging()) {
           console.info(LOG + ': Voltage dropped (' + voltage.toFixed(1) + 'V) but BLE actively charging \u2014 stage transition dip, staying DUMP_DONE [' + getBLEInfo() + ']');
+        } else if (isBLEConnected()) {
+          console.info(LOG + ': Voltage dropped (' + voltage.toFixed(1) + 'V) but BLE charger still connected (maintenance mode) \u2014 staying DUMP_DONE [' + getBLEInfo() + ']');
         } else {
-          console.info(LOG + ': Charger removed after dump (' + voltage.toFixed(1) + 'V, BLE not charging) - re-armed [' + getBLEInfo() + ']');
-          rearmToParked('Charger removed (V=' + voltage.toFixed(1) + ', BLE not charging) - re-armed');
+          console.info(LOG + ': Charger removed after dump (' + voltage.toFixed(1) + 'V, BLE not connected) - re-armed [' + getBLEInfo() + ']');
+          rearmToParked('Charger removed (V=' + voltage.toFixed(1) + ', BLE not connected) - re-armed');
         }
       }
       if (currentState === STATES.PARKED && voltage > CHARGER_ON_V) {
@@ -408,10 +427,12 @@ rules.JSRule({
       if (currentState === STATES.CHARGING && voltage <= CHARGER_OFF_V) {
         if (isBLECharging()) {
           console.info(LOG + ': Voltage dip during stabilisation (' + voltage.toFixed(1) + 'V) but BLE actively charging \u2014 keeping CHARGING [' + getBLEInfo() + ']');
+        } else if (isBLEConnected()) {
+          console.info(LOG + ': Voltage dip during stabilisation (' + voltage.toFixed(1) + 'V) but BLE charger still connected \u2014 keeping CHARGING [' + getBLEInfo() + ']');
         } else {
-          console.info(LOG + ': Charger removed during stabilisation (' + voltage.toFixed(1) + 'V, BLE not charging) [' + getBLEInfo() + ']');
+          console.info(LOG + ': Charger removed during stabilisation (' + voltage.toFixed(1) + 'V, BLE not connected) [' + getBLEInfo() + ']');
           cancelTimer('stabTimer');
-          rearmToParked('Charger removed during stabilisation (V=' + voltage.toFixed(1) + ', BLE not charging)');
+          rearmToParked('Charger removed during stabilisation (V=' + voltage.toFixed(1) + ', BLE not connected)');
         }
       }
     } catch (e) {
@@ -443,7 +464,7 @@ rules.JSRule({
           function () {
             console.info(LOG + ': Cooldown complete - relay OFF, staying in DUMP_DONE');
             relayOff('Dump complete + cooldown');
-            setState(STATES.DUMP_DONE, 'Dump cycle complete - waiting for charger removal');
+            setState(STATES.DUMP_DONE, 'Dump cycle complete - ready for next ride');
           }
         );
         cache.private.put('cooldownTimer', cooldownTimer);
@@ -627,10 +648,12 @@ rules.JSRule({
       console.info(LOG + ': BLE State changed to ' + bleState + ' [V=' + voltage.toFixed(1) + 'V, state=' + currentState + ']');
 
       var chargingStates = ['Bulk', 'Absorption', 'Float', 'Recondition'];
+      var connectedStates = ['Bulk', 'Absorption', 'Float', 'Storage', 'Recondition', 'Idle'];
       var isCharging = chargingStates.indexOf(bleState) >= 0;
+      var isConnected = connectedStates.indexOf(bleState) >= 0;
 
-      if (isCharging && currentState === STATES.PARKED) {
-        console.info(LOG + ': BLE ' + bleState + ' while PARKED \u2014 charger active, starting sequence');
+      if ((isCharging || isConnected) && currentState === STATES.PARKED) {
+        console.info(LOG + ': BLE ' + bleState + ' while PARKED \u2014 charger detected, starting sequence');
         startChargerSequence(voltage, 'BLE ' + bleState);
       } else if (isCharging && currentState === STATES.DUMP_DONE) {
         // Cancel any pending disconnect timer \u2014 charger is clearly still connected

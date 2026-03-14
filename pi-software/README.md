@@ -350,7 +350,7 @@ cat /var/log/innovv-k7-backup.log
 
 ## TODO / Future Work
 
-- [ ] **Shelly Plus Uni relay integration** — Auto power-on K7 when bike arrives (Traccar geofence), auto power-off after dump complete (Sonoff on order)
+- [x] ~~**Shelly Plus Uni relay integration**~~ — **DONE** (v1 2026-03-11). Auto power-on via dual-sensor charger detection (BLE + voltage), auto power-off after dump complete. See [K7_AUTO_POWER_README.md](../docs/K7_AUTO_POWER_README.md).
 - [ ] **K7 time sync** — Verify clock stays accurate; consider syncing from Pi if drift detected
 - [ ] **Parking mode** — Handle parking/accident folder types when they appear
 - [ ] **Retention policy** — Auto-delete old footage from NAS after N days
