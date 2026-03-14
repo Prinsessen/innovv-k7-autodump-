@@ -139,9 +139,21 @@ class OpenHABClient:
         """Update count of files verified on NAS but not yet deleted from K7."""
         self._update_item(self._item("Pending_Deletes"), str(count))
 
+    def update_nas_free_gb(self, free_gb: float):
+        """Update NAS free space in GB."""
+        self._update_item(self._item("NAS_Free_GB"), f"{free_gb:.1f}")
+
     def update_pi_disk_free(self, free_mb: int):
         """Update Pi SD card free space in MB."""
         self._update_item(self._item("Pi_Disk_Free_MB"), str(free_mb))
+
+    def update_transfer_speed(self, speed_text: str):
+        """Update the current transfer speed display.
+
+        speed_text examples: '3.4 MB/s', 'Idle', ''
+        Called every ~5s during active downloads.
+        """
+        self._update_item(self._item("Transfer_Speed"), speed_text)
 
     def update_error(self, message: str):
         """Update last error message."""

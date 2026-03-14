@@ -1,0 +1,37 @@
+// =============================================================================
+// INNOVV K7 Dashcam — Auto-Dump Service Status
+// =============================================================================
+// Updated by Pi 4 (k7-bridge / 10.0.5.60) via REST API.
+// Service: innovv-k7-dump.service
+// Source:  /etc/openhab/innovv-k7/pi-software/
+// =============================================================================
+
+Group   gK7                                     "INNOVV K7 Dashcam"             <k7-cam-blue>   (gGA)   ["Equipment"]
+
+// --- Status ---
+String      K7_Dump_Status                      "Dump Status [%s]"              <k7-sync-blue>  (gK7)   ["Status"]
+Switch      K7_Camera_Online                    "K7 Online [MAP(k7_onoff.map):%s]" <k7-online-green> (gK7) ["Status"]
+DateTime    K7_Last_Dump                        "Last Dump [%1$td.%1$tm.%1$tY %1$tH:%1$tM]" <k7-time-blue> (gK7) ["Status"]
+String      K7_Last_Error                       "Last Error [%s]"               <k7-alert-red>  (gK7)   ["Status"]
+
+// --- WiFi connection ---
+String      K7_WiFi_Signal                      "K7 WiFi Signal [%s]"           <k7-wifi-cyan>  (gK7)   ["Status"]
+String      K7_WiFi_Band                        "K7 WiFi Band [%s]"             <k7-band-teal>  (gK7)   ["Status"]
+
+// --- Download progress ---
+Number      K7_Files_On_Camera                  "Files on Camera [%d]"          <k7-sdcard-orange> (gK7) ["Status"]
+Number      K7_Files_Downloaded                 "Files Downloaded [%d]"         <k7-download-green> (gK7) ["Status"]
+Number      K7_MB_Downloaded                    "MB Downloaded [%.1f MB]"       <k7-data-blue>  (gK7)   ["Status"]
+String      K7_Transfer_Speed                   "Transfer Speed [%s]"           <k7-speed-blue> (gK7)   ["Measurement"]
+
+// --- Verified transfers ---
+Number      K7_Files_Verified                   "Files Verified on NAS [%d]"    <k7-verified-green> (gK7) ["Status"]
+Number      K7_Files_Deleted                    "Files Deleted from K7 [%d]"    <k7-delete-red> (gK7)   ["Status"]
+Number      K7_Pending_Deletes                  "Pending K7 Deletes [%d]"       <k7-pending-orange> (gK7) ["Status"]
+
+// --- Settings ---
+Switch      K7_Dump_Movie_E                     "Dump Movie_E (Loop Video) [MAP(k7_onoff.map):%s]" <k7-movie-orange> (gK7) ["Status"]
+
+// --- Storage health ---
+Number      K7_NAS_Free_GB                      "NAS Free [%.0f GB]"             <k7-disk-cyan>  (gK7)   ["Measurement"]
+Number      K7_Pi_Disk_Free_MB                  "Pi SD Free [%d MB]"            <k7-disk-cyan>  (gK7)   ["Status"]

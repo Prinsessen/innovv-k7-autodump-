@@ -220,6 +220,9 @@ class InnovvK7Dump:
         free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
         min_free = self.config["safety"]["min_nas_free_space_gb"]
 
+        # Report NAS free space to OpenHAB
+        self.openhab.update_nas_free_gb(free_gb)
+
         if free_gb < min_free:
             self.log.error(f"NAS free space {free_gb:.1f}GB < minimum {min_free}GB")
             return False
@@ -681,9 +684,27 @@ class InnovvK7Dump:
                 # Send heartbeat before each download to keep connection alive
                 self.k7.heartbeat()
 
+                # Progress callback for near-realtime speed reporting.
+                # Reports to OpenHAB every ~5 seconds during download.
+                _dl_start_time = time.time()
+                _last_speed_report = [0.0]  # mutable for closure
+
+                def _progress_cb(downloaded_now, total_size):
+                    now = time.time()
+                    if now - _last_speed_report[0] < 5.0:
+                        return  # throttle to every 5s
+                    _last_speed_report[0] = now
+                    elapsed = now - _dl_start_time
+                    if elapsed > 0.5:
+                        speed_mbps = (downloaded_now / (1024 * 1024)) / elapsed
+                        pct = int(downloaded_now * 100 / total_size) if total_size else 0
+                        speed_text = f"{speed_mbps:.1f} MB/s ({pct}%)"
+                        self.openhab.update_transfer_speed(speed_text)
+
                 # Download via HTTP (returns DownloadResult with SHA-256)
                 result = self.k7.download_file(
                     remote_path, local_path,
+                    progress_callback=_progress_cb,
                     cancel_check=lambda: not self.running,
                 )
 
@@ -816,6 +837,7 @@ class InnovvK7Dump:
                 )
 
             # Step 8: Final status update
+            self.openhab.update_transfer_speed("")  # Clear speed display
 
             # Only clear errors and mark complete if loop finished without error.
             # Error-break paths already set their own status/error messages.
@@ -836,6 +858,7 @@ class InnovvK7Dump:
             self.log.exception(f"Dump cycle failed: {e}")
             self.openhab.update_status(f"error: {str(e)[:50]}")
             self.openhab.update_error(f"Dump exception: {str(e)[:150]}")
+            self.openhab.update_transfer_speed("")  # Clear speed on error
             if session_id:
                 self._update_session(session_id, 0, 0, f"error: {str(e)[:100]}")
             return False
