@@ -95,7 +95,7 @@ See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab)
 | IRFP9140N | P-channel MOSFET, TO-247 | High-side power switch for K7 |
 | 10K resistor | 1/4W | Gate pull-up (fail-safe OFF) |
 | 100Ω resistor | 1/4W (optional) | Gate inrush limiter |
-| Schottky diode | SB540 (5A/40V) or 1N5822 (3A/40V) | **REQUIRED** — Blocks MOSFET back-feed into ignition circuit |
+| Blocking diode | 1N4007 (1A/1000V) | **INSTALLED** — Blocks MOSFET back-feed into ignition circuit |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video |
 | Raspberry Pi 4 | Any RAM variant | Runs dump service + BLE monitor |
 | Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Primary charger detection via BLE |
@@ -122,8 +122,8 @@ See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab)
      │
      └── IRFP9140N Drain (pin 2) ──────────┐
                                           ├──> K7 DC power input (+)
-  Motorcycle ignition 12V ──►|── SB540 ──┘
-                            (Schottky diode: anode=ignition, cathode=splice)
+  Motorcycle ignition 12V ──►|── 1N4007 ──┘
+                            (1N4007: anode=ignition, cathode=splice)
                             (Blocks MOSFET back-feed to ignition circuit)
 
   Battery GND ─────────────────────> K7 DC power input (-)
@@ -155,7 +155,7 @@ innovv-k7-autodump/
 │   └── shelly-failsafe-script.js          ← On-device mJS failsafe script
 ├── openhab/
 │   ├── items/
-│   │   ├── motorcycle_k7_power.items      ← Shelly + BLE charger + virtual state items (20 items)
+│   │   ├── motorcycle_k7_power.items      ← Shelly + BLE charger + session tracking + virtual state items (30 items)
 │   │   └── innovv_k7.items                ← Pi dump service status items
 │   ├── things/
 │   │   └── shelly.things                  ← Shelly Plus Uni thing definition
@@ -174,7 +174,7 @@ innovv-k7-autodump/
 
 See the circuit diagram above. Solder the IRFP9140N + 10K pull-up + optional 100Ω gate resistor. Heat-shrink the assembly.
 
-**Install the Schottky diode** (SB540/1N5822) in the ignition wire before the splice point to prevent MOSFET back-feed to the GPS tracker.
+**Install the 1N4007 diode** in the ignition wire before the splice point to prevent MOSFET back-feed to the GPS tracker. (Anode on ignition side, cathode on K7/MOSFET splice.)
 
 ### 2. Set Up the Victron BLE Monitor
 
@@ -250,7 +250,7 @@ cp openhab/transform/*.map  /etc/openhab/transform/
 | # | Rule | Trigger |
 |---|------|---------|
 | 1 | System Init | Startup — relay OFF, state recovery |
-| 2 | Ignition Handler | Ignition changed — 30s debounce, DUMP_DONE → RIDING |
+| 2 | Ignition Handler | Ignition changed — 5s debounce (1N4007 diode), DUMP_DONE → RIDING |
 | 3 | Voltage Monitor | ADC voltage changed — charger/low battery detect |
 | 4 | Dump Complete | Dump status changed — cooldown & relay OFF |
 | 5 | WiFi Poll | Cron (1 min) — Shelly SSID/RSSI |
@@ -276,6 +276,7 @@ cp openhab/transform/*.map  /etc/openhab/transform/
 | 3-failure abort | Consecutive | Stops if K7 goes offline mid-cycle |
 | MOSFET fail-safe | Physical | 10K pull-up ensures OFF when Shelly is unpowered |
 | Local failsafe script | On Shelly | Basic power control when openHAB is unreachable |
+| Manual mode safety | 60 min timeout | Shelly detects external relay toggle, 60-min safety timer |
 
 ## Verified Transfer Pipeline
 

@@ -158,7 +158,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | 10K resistor | 1/4W, any tolerance | Gate pull-up (fail-safe OFF) | Soldered to MOSFET |
 | 1N4007 diode | Silicon rectifier, 1A/1000V, 0.7V Vf | **INSTALLED** — Blocks MOSFET back-feed into ignition circuit | Inline on ignition wire before K7/MOSFET splice |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video | Mounted on motorcycle |
-| Teltonika FMM920 | GPS tracker (866088075183606) | Ignition state + battery voltage | Mounted on motorcycle |
+| Teltonika FMM920 | GPS tracker | Ignition state + battery voltage | Mounted on motorcycle |
 | Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Charges battery, PRIMARY charger detection via BLE | Garage |
 | Pi 4 | Raspberry Pi 4 | K7 dump service + Victron BLE monitor | Garage IP65 enclosure (10.0.5.60) |
 | ALFA AWUS036ACM | MT7612U, AC1200, USB 3.0 | 5GHz WiFi to K7 AP (mt76 in-kernel driver) | Inside IP65 enclosure with Pi |
@@ -175,7 +175,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | `innovv-k7/shelly-failsafe-script.js` | Local failsafe for Shelly (mJS, Script ID 1) — runs on-device when openHAB unavailable |
 | `innovv-k7/pi-software/innovv_k7_dump.py` | Pi dump service (**NOT modified**) |
 | `victron-ble/victron_ble_monitor.py` | Pi BLE daemon — reads Victron charger via GATT, posts to openHAB REST API |
-| `sitemaps/myhouse.sitemap` | K7 Auto-Power + Shelly Status + Victron Charger frames |
+| `sitemaps/k7-sitemap-extract.sitemap` | K7 Auto-Power + Shelly Status + Victron Charger frames (extract — K7 sections only) |
 
 ## State Machine
 
@@ -247,7 +247,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | Low battery cutoff | 12.0V | Protects battery from deep discharge |
 | Charger ON threshold | 13.0V (raw ADC) | Detect charger connecting (fallback) |
 | Charger OFF threshold | 12.7V (raw ADC) | Confirm charger truly removed (fallback) |
-| Ignition debounce | 30 seconds | Filters MOSFET back-feed false triggers to FMM920 (diode installed 2026-03-12 — may be reducible) |
+| Ignition debounce | 5 seconds | Filters MOSFET back-feed false triggers to FMM920 (1N4007 diode installed 2026-03-12, debounce reduced from 30s to 5s) |
 | Post-dump cooldown | 30 seconds | Clean K7 shutdown after dump |
 | Re-arm grace period | 5 minutes | Suppresses voltage-only false retrigger after charger disconnect |
 | BLE offline threshold | ~90 seconds | 3 consecutive BLE failures = charger mains removed |
@@ -531,8 +531,9 @@ MOSFET drain through the ignition wire to the FMM920. The FMM920 reports ignitio
 to Traccar, which triggers false "Springfield Started" / "Springfield Parked" email
 notifications every time the K7 auto-power cycles.
 
-**Hardware fix: Schottky blocking diode** — Install SB540 or 1N5822 in the ignition wire
-BEFORE the splice point. The software debounce (30s) handles this until the diode is installed.
+**Hardware fix: 1N4007 blocking diode** — Installed 2026-03-12 in the ignition wire
+BEFORE the splice point. Blocks MOSFET back-feed to FMM920. Anode on ignition side, cathode on K7/MOSFET splice.
+Debounce reduced from 30s to 5s after diode installation — verified working, no false triggers.
 
 ### 6. Failsafe Script (on-device)
 
@@ -593,14 +594,28 @@ The failsafe yields to openHAB `sendCommand()` when LAN control is available.
 | `MC_Charger_State` | String | Charge state: Off/Idle/Bulk/Absorption/Float/Storage/Recondition |
 | `MC_Charger_Last_Update` | DateTime | Last successful BLE data update |
 
-**Total: 20 items** in `items/motorcycle_k7_power.items`
+### Charge Session Items (via Pi BLE daemon REST API) (9 items)
+
+| Item | Type | Purpose |
+|------|------|---------|
+| `MC_Charge_Session_Start` | DateTime | Session start time |
+| `MC_Charge_Session_End` | DateTime | Session end time |
+| `MC_Charge_Session_Minutes` | Number | Session duration (minutes) |
+| `MC_Charge_Session_V_Start` | Number | Battery voltage at session start (V) |
+| `MC_Charge_Session_V_End` | Number | Battery voltage at session end (V) |
+| `MC_Charge_Session_V_Delta` | Number | Voltage change during session (V) |
+| `MC_Charge_Session_Wh` | Number | Energy charged during session (Wh) |
+| `MC_Charge_Session_Peak` | String | Peak charge stage reached |
+| `MC_Charge_Session_Count` | Number | Total charge sessions count |
+
+**Total: 30 items** (1 group + 29 items) in `items/motorcycle_k7_power.items`
 
 ## Rules Reference (10 JSRules)
 
 | # | Rule | Trigger | Action |
 |---|------|---------|--------|
 | 1 | System Init | System startup (level 100) | Relay OFF, voltage-aware + BLE-aware state selection, `updateChargerConnection()` |
-| 2 | Ignition Handler | `Vehicle10_Ignition` changed | 30s debounce, MOSFET back-feed suppression during TRANSFERRING/COOLDOWN, DUMP_DONE → RIDING allowed |
+| 2 | Ignition Handler | `Vehicle10_Ignition` changed | 5s debounce (1N4007 diode installed), MOSFET back-feed suppression during TRANSFERRING/COOLDOWN, DUMP_DONE → RIDING allowed |
 | 3 | Voltage Monitor | `MC_K7_Shelly_Voltage` changed | Charger detect (>13.0V), charger removed (<12.7V, only when BLE not charging), low battery (<12.0V) |
 | 4 | Dump Complete | `K7_Dump_Status` changed | Cooldown (30s) then relay OFF → DUMP_DONE |
 | 5 | Shelly WiFi Poll | Cron every minute | HTTP GET to Shelly API, updates SSID + RSSI |
@@ -652,11 +667,23 @@ The local failsafe (`innovv-k7/shelly-failsafe-script.js`) runs on the Shelly's 
 | Charger ON threshold | 13.0V (raw) | Detect charger connecting (matches JS rule) |
 | Charger OFF threshold | 12.7V (raw) | Confirm charger removed |
 | Stabilisation | 3 checks (90s) | Confirm charger is stable |
-| Max ON time | 25 min | Shorter than openHAB's 30 min |
-| Low battery cutoff | 11.5V | Emergency protection |
+| Max ON time (auto) | 25 min | Shorter than openHAB's 30 min — so openHAB timer takes priority |
+| Max ON time (manual) | 60 min | External relay toggle (Shelly app/cloud/physical) |
+| Low battery cutoff | 11.5V | Emergency protection — applies in ALL modes |
 | Voltmeter ID | 100 | Peripheral added via `Uni.AddPeripheral` |
 
-The failsafe has a **shorter timeout** (25 min vs 30 min) so openHAB's safety timer takes priority if both are running.
+The failsafe has a **shorter auto timeout** (25 min vs 30 min) so openHAB's safety timer takes priority if both are running.
+
+### Manual Mode Detection (v4 — 2026-03-15)
+
+The failsafe detects external relay toggles (Shelly app, cloud, API, physical button) via a `Shelly.addStatusHandler()` callback. When relay ON is detected from a source other than the script's own `relayControl()`:
+
+- Sets `isManualOn = true`
+- Starts 60-minute safety timer (generous for browsing K7 footage via WiFi)
+- **Skips charger-removal voltage shutoff** (no charger present when riding/stopped away from home — battery ~12.5V would trigger the 12.7V threshold within 30s)
+- Low battery cutoff (< 11.5V) still applies regardless
+
+This covers the edge case where the user toggles the relay via the Shelly app through their phone hotspot (STA1) when openHAB is unreachable — e.g., stopped on a ride wanting to browse footage. Without this, the relay would stay ON indefinitely since openHAB Rule 7 (Manual Override) never fires.
 
 ## Test Results (2026-03-12)
 
@@ -671,8 +698,10 @@ All scenarios tested live with real hardware:
 | Full reconnect (mains + battery from cold) | Offline → CHARGING → dump cycle | **PASS** | Voltage trigger first, BLE confirmed Absorption |
 | Grace period suppression | V > 13.0V after re-arm suppressed | **PASS** | 0-2 min since re-arm, all suppressed |
 | `MC_Charger_Connection` status | Correct for all 3 states | **PASS** | "Offline", "Standby (cable detached)", "Charging — Float/Absorption" |
-| Ignition back-feed during TRANSFERRING | Suppressed (MOSFET relay ON) | **PASS** | 30s debounce + state check |
+| Ignition back-feed during TRANSFERRING | Suppressed (MOSFET relay ON) | **PASS** | 5s debounce + state check (1N4007 diode installed) |
 | Manual relay override | Starts dump from PARKED/DUMP_DONE | **PASS** | Accidental toggle handled correctly |
+| Shelly manual mode detection | External relay ON detected, 60-min timer | **PASS** | `Shelly.addStatusHandler()` fires, `isManualOn=true` |
+| Manual mode charger-removal skip | Relay stays ON on battery-only (~12.5V) | **PASS** | No false shutoff at 12.7V threshold |
 | GraalJS Duration API | `toMinutes()` works, `toSeconds()`/`getSeconds()` fail | **VERIFIED** | Both isBLEFresh and grace period use toMinutes |
 
 ## Current Draw & Battery Drain Analysis
@@ -752,6 +781,17 @@ for i in items:
 ```
 
 ## Changelog
+
+### v4 — 2026-03-15: Manual Mode Safety + Diode Debounce Reduction
+- **Shelly failsafe manual mode**: `Shelly.addStatusHandler()` detects external relay toggles from any source (app, cloud, API)
+- **60-minute manual timeout**: Generous limit for browsing K7 footage via WiFi when stopped on a ride
+- **Charger-removal skip in manual mode**: Battery ~12.5V would trigger the 12.7V threshold within 30s — now only low battery cutoff (11.5V) applies in manual mode
+- **1N4007 diode installed**: Blocks MOSFET back-feed into ignition circuit/FMM920 (was causing false ignition=ON reports)
+- **Ignition debounce reduced**: 30s → 5s (diode eliminates back-feed, minimal debounce sufficient for electrical noise)
+- **Charge session tracking**: 9 new items for session start/end times, voltage delta, energy charged, peak stage
+- **Total items**: 20 → 30 (1 group + 29 items)
+- **Sitemap**: Full house sitemap replaced with K7-only extract (sensitive data removed from public repo)
+- **IMEI removed**: FMM920 tracker IMEI scrubbed from documentation
 
 ### v3 — 2026-03-12: Storage/Idle Detection + DUMP_DONE Ride Allowance
 - **`isBLEConnected()` function**: New middle tier — includes Storage/Idle (charger on mains, battery may be full)

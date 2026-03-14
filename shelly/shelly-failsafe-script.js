@@ -20,10 +20,17 @@
 //   2. If voltage > 13.0V for 90s continuously -> charger detected -> relay ON
 //      Charger removal detected when voltage < 12.7V (hysteresis prevents bounce)
 //   3. Relay ON drives MOSFET gate to GND -> MOSFET ON -> K7 powered
-//   4. Relay stays ON for max 25 minutes (dump window)
+//   4. Auto mode: relay stays ON for max 25 minutes (dump window)
 //   5. After 25 min or voltage drops below 12.7V -> relay OFF
 //   6. If voltage < 11.5V -> relay forced OFF immediately (protect battery)
 //   7. Relay OFF -> 10K pull-up holds gate high -> MOSFET OFF -> K7 off
+//
+// Manual Mode (external relay toggle from Shelly app/cloud/API):
+//   - Detected via Shelly.addStatusHandler() on switch:0 output change
+//   - Relay stays ON for max 60 minutes (browse footage on K7 app)
+//   - Voltage-based charger removal does NOT shut off (no charger present)
+//   - Low battery cutoff (< 11.5V) still applies as emergency protection
+//   - If user forgets to turn off, 60-min timeout protects battery
 //
 // Upload: Via Shelly RPC (Script.PutCode). All non-ASCII characters MUST
 //         be stripped before upload or Shelly returns 500 error.
@@ -41,6 +48,7 @@ let CONFIG = {
   checkIntervalMs: 30000,   // 30s — ADC polling interval
   stabChecks: 3,            // 3 checks (90s) required to confirm charger
   maxOnMinutes: 25,         // Max relay-ON time (local limit, shorter than OH)
+  manualMaxOnMinutes: 60,   // Max relay-ON time for manual/external ON (browse footage)
   relayId: 0                // Relay channel (0 = relay1)
 };
 
@@ -49,6 +57,7 @@ let state = {
   highVoltageCount: 0,      // Consecutive checks with voltage > threshold
   relayOnTime: 0,           // Timestamp when relay was turned ON (ms)
   relayIsOn: false,         // Current relay state
+  isManualOn: false,        // True if relay was turned ON externally (app/API)
   lastVoltage: 0            // Last ADC reading
 };
 
@@ -65,15 +74,43 @@ function relayControl(on) {
       state.relayIsOn = on;
       if (on) {
         state.relayOnTime = Date.now();
-        log("Relay ON — charger confirmed");
+        state.isManualOn = false;  // Script-driven ON, not manual
+        log("Relay ON -- charger confirmed");
       } else {
         state.relayOnTime = 0;
         state.highVoltageCount = 0;
+        state.isManualOn = false;
         log("Relay OFF");
       }
     }
   });
 }
+
+// --- External relay change handler ---
+// Catches relay ON/OFF from ANY source: Shelly app, cloud, API, openHAB.
+// If relay was turned ON externally (not by this script), start safety timer
+// with the longer manual timeout (manualMaxOnMinutes) so user has time to
+// browse footage on K7 app before auto-shutoff protects the battery.
+Shelly.addStatusHandler(function (event) {
+  if (event.component === "switch:" + JSON.stringify(CONFIG.relayId)) {
+    if (typeof event.delta.output !== "undefined") {
+      if (event.delta.output === true && !state.relayIsOn) {
+        // Relay turned ON externally
+        state.relayIsOn = true;
+        state.relayOnTime = Date.now();
+        state.isManualOn = true;
+        log("External relay ON detected -- safety timer " + CONFIG.manualMaxOnMinutes + "min started");
+      } else if (event.delta.output === false && state.relayIsOn) {
+        // Relay turned OFF externally
+        state.relayIsOn = false;
+        state.relayOnTime = 0;
+        state.isManualOn = false;
+        state.highVoltageCount = 0;
+        log("External relay OFF detected");
+      }
+    }
+  }
+});
 
 // --- Main check loop ---
 function checkVoltage() {
@@ -89,7 +126,7 @@ function checkVoltage() {
     // --- Emergency low battery ---
     if (voltage < CONFIG.lowBattVoltage) {
       if (state.relayIsOn) {
-        log("LOW BATTERY " + voltage.toFixed(2) + "V — forcing relay OFF");
+        log("LOW BATTERY " + voltage.toFixed(2) + "V -- forcing relay OFF");
         relayControl(false);
       }
       state.highVoltageCount = 0;
@@ -99,8 +136,10 @@ function checkVoltage() {
     // --- Safety timeout ---
     if (state.relayIsOn && state.relayOnTime > 0) {
       let onMinutes = (Date.now() - state.relayOnTime) / 60000;
-      if (onMinutes >= CONFIG.maxOnMinutes) {
-        log("TIMEOUT — relay ON for " + onMinutes.toFixed(0) + " min — forcing OFF");
+      let limit = state.isManualOn ? CONFIG.manualMaxOnMinutes : CONFIG.maxOnMinutes;
+      if (onMinutes >= limit) {
+        log("TIMEOUT -- relay ON for " + onMinutes.toFixed(0) + " min (limit " + limit + "min, " +
+            (state.isManualOn ? "manual" : "auto") + ") -- forcing OFF");
         relayControl(false);
         return;
       }
@@ -123,9 +162,14 @@ function checkVoltage() {
       }
       state.highVoltageCount = 0;
 
-      if (state.relayIsOn) {
-        log("Charger removed (" + voltage.toFixed(2) + "V) — relay OFF");
+      if (state.relayIsOn && !state.isManualOn) {
+        log("Charger removed (" + voltage.toFixed(2) + "V) -- relay OFF");
         relayControl(false);
+      } else if (state.relayIsOn && state.isManualOn) {
+        // Manual mode: don't shut off on low voltage — user wants K7 powered
+        // Safety timeout (manualMaxOnMinutes) and low battery cutoff still apply
+        let onMin = state.relayOnTime > 0 ? ((Date.now() - state.relayOnTime) / 60000).toFixed(0) : "?";
+        log("Manual mode -- voltage " + voltage.toFixed(2) + "V (no charger) -- " + onMin + "min elapsed, timeout at " + CONFIG.manualMaxOnMinutes + "min");
       }
     } else {
       // Between OFF and ON thresholds (hysteresis zone) — no action
@@ -140,10 +184,10 @@ function checkVoltage() {
 }
 
 // --- Start timer ---
-log("Starting — check every " + (CONFIG.checkIntervalMs / 1000) + "s");
+log("Starting -- check every " + (CONFIG.checkIntervalMs / 1000) + "s");
 log("Charger ON: " + CONFIG.chargerOnVoltage + "V, OFF: " + CONFIG.chargerOffVoltage + "V, " +
     "low battery: " + CONFIG.lowBattVoltage + "V, " +
-    "max ON: " + CONFIG.maxOnMinutes + " min");
+    "auto max: " + CONFIG.maxOnMinutes + "min, manual max: " + CONFIG.manualMaxOnMinutes + "min");
 
 // Initial check after 5 seconds
 Timer.set(5000, false, checkVoltage);
