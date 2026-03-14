@@ -291,12 +291,17 @@ class K7ApiClient:
         Uses a .partial temp file and renames on completion to prevent
         corrupt/incomplete files from appearing on the NAS.
 
-        Computes SHA-256 during download and calls fsync() before rename
-        to guarantee the data is flushed to the NAS disk.
+        Computes SHA-256 **inline** during download (hashing each chunk in
+        memory before writing to disk) and calls fsync() before rename to
+        guarantee the data is flushed to the NAS disk.
 
         Returns a DownloadResult with success flag, byte count, and SHA-256.
         The SHA-256 is computed over the FULL file content (even for resumed
-        downloads — if resume is used, the existing partial is re-hashed).
+        downloads — the existing partial is re-hashed before appending).
+
+        The inline hash captures what arrived over WiFi.  verify_local_file()
+        then re-reads the file from the NAS to cross-validate, catching both
+        WiFi transfer corruption AND NAS write corruption.
         """
         url = f"{self._api_base}{remote_path}"
         partial_path = local_path + ".partial"
@@ -319,10 +324,23 @@ class K7ApiClient:
                 result.success = True
                 return result
 
+            # Inline SHA-256 hasher — captures what arrived over WiFi
+            dl_hasher = hashlib.sha256()
+
             # Check for partial download (resume support)
             rest_pos = 0
             if os.path.exists(partial_path):
                 rest_pos = os.path.getsize(partial_path)
+
+            # If resuming, hash the existing partial data first so the
+            # final digest covers the FULL file content.
+            if rest_pos > 0:
+                with open(partial_path, "rb") as pf:
+                    while True:
+                        blk = pf.read(262144)
+                        if not blk:
+                            break
+                        dl_hasher.update(blk)
 
             req = Request(url)
             if rest_pos > 0:
@@ -335,6 +353,7 @@ class K7ApiClient:
                     # Server doesn't support resume — start over
                     log.debug("Server doesn't support resume, starting from beginning")
                     rest_pos = 0
+                    dl_hasher = hashlib.sha256()  # reset hasher
 
                 # Get content length for progress tracking
                 content_length = resp.headers.get("Content-Length")
@@ -350,9 +369,10 @@ class K7ApiClient:
                             log.info("Download cancelled by shutdown request")
                             cancelled = True
                             break
-                        chunk = resp.read(65536)
+                        chunk = resp.read(262144)  # 256 KB chunks
                         if not chunk:
                             break
+                        dl_hasher.update(chunk)
                         f.write(chunk)
                         downloaded += len(chunk)
                         if progress_callback and total_size:
@@ -366,8 +386,8 @@ class K7ApiClient:
                     result.error = "cancelled"
                     return result
 
-            # Compute SHA-256 of the COMPLETE .partial file before rename
-            dl_hash = self._hash_file(partial_path)
+            # SHA-256 computed inline during download — no NAS re-read needed
+            dl_hash = dl_hasher.hexdigest()
 
             result.bytes_downloaded = downloaded
             result.sha256 = dl_hash
