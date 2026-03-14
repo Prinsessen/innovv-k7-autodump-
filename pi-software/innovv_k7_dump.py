@@ -374,8 +374,10 @@ class InnovvK7Dump:
 
         self.log.info(f"Retrying {len(pending)} pending K7 deletions...")
         deleted_count = 0
-        failed_count = 0
-        for item in pending:
+        recovery_attempts = 0
+        i = 0
+        while i < len(pending):
+            item = pending[i]
             remote_path = item["remote_path"]
             local_path = item["local_path"]
 
@@ -384,22 +386,32 @@ class InnovvK7Dump:
                 self.log.warning(
                     f"NAS file missing for pending delete, skipping: {remote_path}"
                 )
+                i += 1
                 continue
-
-            # Throttle: K7 Novatek httpd crashes after ~8 rapid deletes
-            if deleted_count > 0:
-                time.sleep(0.5)
 
             if self.k7.delete_file(remote_path):
                 self._mark_deleted_from_k7(remote_path)
                 deleted_count += 1
+                recovery_attempts = 0
                 self.log.info(f"  Pending delete OK: {remote_path}")
+                i += 1
             else:
-                failed_count += 1
-                self.log.warning(f"  Pending delete failed: {remote_path}")
-                if failed_count >= 3:
-                    self.log.warning("3 delete failures — stopping pending deletes")
+                # K7 httpd crashed from SD card GC — wait for recovery
+                recovery_attempts += 1
+                if recovery_attempts > 3:
+                    self.log.warning(
+                        f"httpd recovery failed {recovery_attempts} times — "
+                        f"stopping pending deletes"
+                    )
                     break
+                self.log.info(
+                    f"  Delete failed, waiting for httpd recovery "
+                    f"(attempt {recovery_attempts}/3)..."
+                )
+                if not self.k7.wait_ready(60):
+                    self.log.warning("httpd did not recover — stopping")
+                    break
+                # Don't increment i — retry the same file
 
         if deleted_count:
             self.log.info(
@@ -810,30 +822,42 @@ class InnovvK7Dump:
                 self.openhab.update_status("deleting from K7")
                 del_ok = 0
                 del_fail = 0
-                # Throttled deletes — the K7 Novatek httpd crashes
-                # after ~8 rapid-fire deletes.  A 500ms delay between
-                # requests keeps the server stable.
-                for remote_path in verified_for_deletion:
+                # Burst deletes — K7 Novatek httpd crashes after ~5-8
+                # deletes due to SD card GC.  Strategy: burst as fast
+                # as possible, on failure wait for httpd recovery
+                # (~45s), then burst again.  Max 3 recovery cycles.
+                recovery_attempts = 0
+                idx = 0
+                items = list(verified_for_deletion)
+                while idx < len(items):
                     if not self.running:
                         self.log.info("Shutdown requested, stopping batch delete")
                         break
-                    # Throttle: avoid crashing K7 httpd
-                    if del_ok > 0:
-                        time.sleep(0.5)
+                    remote_path = items[idx]
                     if self.k7.delete_file(remote_path):
                         self._mark_deleted_from_k7(remote_path)
                         del_ok += 1
+                        recovery_attempts = 0
+                        idx += 1
                     else:
+                        recovery_attempts += 1
                         del_fail += 1
-                        self.log.warning(
-                            f"  Delete failed: {remote_path} (will retry next cycle)"
-                        )
-                        if del_fail >= 3:
+                        if recovery_attempts > 3:
                             self.log.warning(
-                                "3 delete failures — stopping batch delete, "
-                                "remaining files deferred to next cycle"
+                                f"httpd recovery failed {recovery_attempts} times "
+                                f"— remaining files deferred to next cycle"
                             )
                             break
+                        self.log.info(
+                            f"  Delete failed, waiting for httpd recovery "
+                            f"(attempt {recovery_attempts}/3)..."
+                        )
+                        if not self.k7.wait_ready(60):
+                            self.log.warning(
+                                "httpd did not recover — deferring remaining"
+                            )
+                            break
+                        # Don't increment idx — retry same file
 
                 self.log.info(
                     f"Batch delete: {del_ok} deleted, {del_fail} failed, "
