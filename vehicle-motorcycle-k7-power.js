@@ -29,6 +29,8 @@ const STAB_SEC    = 60;
 const MAX_ON_MIN  = 30;
 const COOLDOWN_S  = 30;
 const IGN_DEBOUNCE_S = 5;
+const BLE_PLAUSIBLE_DELTA = 2.0;  // Max V difference between BLE charger and Shelly battery
+const WATCHDOG_INTERVAL_S = 300;  // Relay watchdog every 5 minutes
 
 const STATES = {
   PARKED: 'PARKED', RIDING: 'RIDING', CHARGING: 'CHARGING',
@@ -77,9 +79,10 @@ function getBLEInfo() {
 }
 
 // Returns true if Victron BLE charger is online
+// Checks freshness AND plausibility (BLE vs Shelly voltage cross-check)
 function isBLEOnline() {
   try {
-    return items.getItem('MC_Charger_BLE_Online').state === 'ON' && isBLEFresh();
+    return items.getItem('MC_Charger_BLE_Online').state === 'ON' && isBLEFresh() && isBLEPlausible();
   } catch (e) { return false; }
 }
 
@@ -87,7 +90,7 @@ function isBLEOnline() {
 function isBLECharging() {
   try {
     var st = items.getItem('MC_Charger_State').state;
-    return ['Bulk', 'Absorption', 'Float', 'Recondition'].indexOf(st) >= 0 && isBLEFresh();
+    return ['Bulk', 'Absorption', 'Float', 'Recondition'].indexOf(st) >= 0 && isBLEFresh() && isBLEPlausible();
   } catch (e) { return false; }
 }
 
@@ -96,7 +99,7 @@ function isBLECharging() {
 function isBLEConnected() {
   try {
     var st = items.getItem('MC_Charger_State').state;
-    return ['Bulk', 'Absorption', 'Float', 'Storage', 'Recondition', 'Idle'].indexOf(st) >= 0 && isBLEFresh();
+    return ['Bulk', 'Absorption', 'Float', 'Storage', 'Recondition', 'Idle'].indexOf(st) >= 0 && isBLEFresh() && isBLEPlausible();
   } catch (e) { return false; }
 }
 
@@ -124,6 +127,25 @@ function getBLEState() {
     var st = items.getItem('MC_Charger_State').state;
     return (st && st !== 'NULL' && st !== 'UNDEF') ? st : null;
   } catch (e) { return null; }
+}
+
+// Cross-validates BLE charger voltage against Shelly battery voltage.
+// When Pi and charger are far from motorcycle, BLE reports charger's own
+// voltage (13.2V Storage) while battery is actually at 7V. A large delta
+// means the BLE data does NOT reflect actual battery state.
+// Returns true if BLE data is plausible (voltages match within threshold).
+function isBLEPlausible() {
+  try {
+    var bleV = parseFloat(items.getItem('MC_Charger_Voltage').state) || 0;
+    var shellyV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
+    if (bleV === 0 || shellyV === 0) return true;  // Missing data — don't block
+    var delta = Math.abs(bleV - shellyV);
+    if (delta > BLE_PLAUSIBLE_DELTA) {
+      console.warn(LOG + ': BLE STALE — charger V=' + bleV.toFixed(1) + ' vs battery V=' + shellyV.toFixed(1) + ' (delta ' + delta.toFixed(1) + 'V > ' + BLE_PLAUSIBLE_DELTA + 'V)');
+      return false;
+    }
+    return true;
+  } catch (e) { return true; }
 }
 
 // Compute human-readable charger connection status from BLE signals.
@@ -252,7 +274,11 @@ rules.JSRule({
       updateChargerConnection();
       return;
     }
-
+    // Reset to PARKED before evaluating charger state.
+    // startChargerSequence() requires state==PARKED — without this reset,
+    // a reload during TRANSFERRING/RIDING/etc. would cause the init to
+    // silently skip the charger sequence, leaving state stuck.
+    setState(STATES.PARKED, 'System start - init reset');
     var powerItem = items.getItem('MC_K7_Shelly_Voltage');
     var voltage = (!powerItem.isUninitialized && powerItem.state !== 'NULL')
       ? parseFloat(powerItem.state) : 0;
@@ -561,8 +587,8 @@ rules.JSRule({
     if (relayState === 'ON') {
       // Counter-punch: relay ON while DUMP_DONE or COOLDOWN = external (Shelly failsafe)
       var currentState = getState();
-      if (currentState === STATES.DUMP_DONE || currentState === STATES.COOLDOWN || currentState === STATES.PARKED || currentState === STATES.CHARGING) {
-        console.info(LOG + ': Relay ON detected in ' + currentState + ' - unexpected, counter-punching OFF');
+      if (currentState === STATES.DUMP_DONE || currentState === STATES.COOLDOWN || currentState === STATES.PARKED || currentState === STATES.CHARGING || currentState === STATES.LOW_BATTERY) {
+        console.warn(LOG + ': Relay ON detected in ' + currentState + ' - unexpected, counter-punching OFF');
         items.getItem('MC_K7_Relay').sendCommand('OFF');
         return;  // Don't update Relay_Since for the brief blip
       }
@@ -715,5 +741,34 @@ rules.JSRule({
   ],
   execute: function () {
     updateChargerConnection();
+  }
+});
+
+// =============================================================================
+// Rule 11: Relay Safety Watchdog (cron)
+// Periodically verifies relay state is consistent with state machine.
+// Catches relay self-ON events that may be missed by event-driven rules
+// (e.g., Shelly failsafe scripts, brief disconnects, or race conditions).
+// =============================================================================
+rules.JSRule({
+  name: 'K7 Power - Relay Safety Watchdog',
+  description: 'Periodic check: force relay OFF if state machine says it should be OFF',
+  triggers: [
+    triggers.GenericCronTrigger('0 */5 * * * ?')  // Every 5 minutes
+  ],
+  execute: function () {
+    try {
+      var relayState = items.getItem('MC_K7_Relay').state;
+      var currentState = getState();
+      // States where relay MUST be OFF
+      var mustBeOff = [STATES.PARKED, STATES.DUMP_DONE, STATES.COOLDOWN, STATES.LOW_BATTERY];
+      if (relayState === 'ON' && mustBeOff.indexOf(currentState) >= 0) {
+        console.warn(LOG + ': WATCHDOG: Relay is ON but state is ' + currentState + ' \u2014 forcing OFF');
+        items.getItem('MC_K7_Relay').sendCommand('OFF');
+        items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: relay ON in ' + currentState + ' \u2014 forced OFF');
+      }
+    } catch (e) {
+      console.error(LOG + ': Watchdog error: ' + e.message);
+    }
   }
 });
