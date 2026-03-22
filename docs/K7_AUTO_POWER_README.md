@@ -35,7 +35,7 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                               │  Relay1 output             │
                               │    -> IRFP9140N gate       │
                               │  WiFi: STA0=Devices (home) │
-                              │        STA1=AgesenAP (mob) │
+                              │        STA1=YourHotspot (mob) │
                               │  BLE: disabled             │
                               │  Script: K7 Failsafe (mJS) │
                               └───────────┬────────────────┘
@@ -429,7 +429,7 @@ The Shelly has dual WiFi for home and mobile connectivity:
 | Network | SSID | Purpose |
 |---------|------|---------|
 | STA0 (primary) | Devices | Home WiFi — openHAB control |
-| STA1 (failover) | AgesenAP | Phone hotspot — remote relay control when away from home |
+| STA1 (failover) | YourHotspot | Phone hotspot — remote relay control when away from home |
 
 **BLE** is disabled to reduce parasitic current draw (~5-10mA saved). Use STA1 (phone hotspot) for remote control when away from home.
 
