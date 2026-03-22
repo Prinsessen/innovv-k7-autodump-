@@ -44,7 +44,7 @@ let CONFIG = {
   chargerOnVoltage: 13.0,   // V — detect charger connecting (Bulk/Absorption)
   chargerOffVoltage: 12.7,  // V — confirm charger truly removed (freshly charged battery ~12.7V)
   // Hysteresis 0.5V: prevents relay bounce during Vitronic Storage stage (~12.9V)
-  lowBattVoltage: 11.5,     // V — emergency cutoff
+  lowBattVoltage: 12.0,     // V — emergency cutoff (match openHAB LOW_BATT_V)
   checkIntervalMs: 30000,   // 30s — ADC polling interval
   stabChecks: 3,            // 3 checks (90s) required to confirm charger
   maxOnMinutes: 25,         // Max relay-ON time (local limit, shorter than OH)
@@ -136,10 +136,15 @@ function checkVoltage() {
     // --- Safety timeout ---
     if (state.relayIsOn && state.relayOnTime > 0) {
       let onMinutes = (Date.now() - state.relayOnTime) / 60000;
-      let limit = state.isManualOn ? CONFIG.manualMaxOnMinutes : CONFIG.maxOnMinutes;
+      let limit = CONFIG.maxOnMinutes;
+      let mode = "auto";
+      if (state.isManualOn) {
+        limit = CONFIG.manualMaxOnMinutes;
+        mode = "manual";
+      }
       if (onMinutes >= limit) {
         log("TIMEOUT -- relay ON for " + onMinutes.toFixed(0) + " min (limit " + limit + "min, " +
-            (state.isManualOn ? "manual" : "auto") + ") -- forcing OFF");
+            mode + ") -- forcing OFF");
         relayControl(false);
         return;
       }
@@ -166,9 +171,12 @@ function checkVoltage() {
         log("Charger removed (" + voltage.toFixed(2) + "V) -- relay OFF");
         relayControl(false);
       } else if (state.relayIsOn && state.isManualOn) {
-        // Manual mode: don't shut off on low voltage — user wants K7 powered
+        // Manual mode: don't shut off on low voltage - user wants K7 powered
         // Safety timeout (manualMaxOnMinutes) and low battery cutoff still apply
-        let onMin = state.relayOnTime > 0 ? ((Date.now() - state.relayOnTime) / 60000).toFixed(0) : "?";
+        let onMin = "?";
+        if (state.relayOnTime > 0) {
+          onMin = ((Date.now() - state.relayOnTime) / 60000).toFixed(0);
+        }
         log("Manual mode -- voltage " + voltage.toFixed(2) + "V (no charger) -- " + onMin + "min elapsed, timeout at " + CONFIG.manualMaxOnMinutes + "min");
       }
     } else {
@@ -188,6 +196,20 @@ log("Starting -- check every " + (CONFIG.checkIntervalMs / 1000) + "s");
 log("Charger ON: " + CONFIG.chargerOnVoltage + "V, OFF: " + CONFIG.chargerOffVoltage + "V, " +
     "low battery: " + CONFIG.lowBattVoltage + "V, " +
     "auto max: " + CONFIG.maxOnMinutes + "min, manual max: " + CONFIG.manualMaxOnMinutes + "min");
+
+// On startup: read actual relay state to sync internal tracking.
+// Prevents desync if Shelly rebooted while relay was ON.
+Shelly.call("Switch.GetStatus", { id: CONFIG.relayId }, function (res, err) {
+  if (!err && res) {
+    state.relayIsOn = res.output;
+    if (res.output) {
+      state.relayOnTime = Date.now();
+      log("Init: relay is ON (boot state) - starting safety timer");
+    } else {
+      log("Init: relay is OFF - normal");
+    }
+  }
+});
 
 // Initial check after 5 seconds
 Timer.set(5000, false, checkVoltage);
