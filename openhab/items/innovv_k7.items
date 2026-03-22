@@ -1,7 +1,7 @@
 // =============================================================================
 // INNOVV K7 Dashcam — Auto-Dump Service Status
 // =============================================================================
-// Updated by Pi 4 (k7-bridge / 10.0.5.60) via REST API.
+// Updated by Pi 4 (k7-bridge / 192.168.1.60) via REST API.
 // Service: innovv-k7-dump.service
 // Source:  /etc/openhab/innovv-k7/pi-software/
 // =============================================================================

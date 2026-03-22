@@ -3,7 +3,7 @@
 // =============================================================================
 // Runs ON the Shelly Plus Uni itself (mJS scripting engine).
 // Script ID: 1 ("K7 Failsafe"), enabled, running.
-// Device: shellyplusuni-e08cfe8b1c3c  IP: 10.0.5.62  FW: 1.7.4
+// Device: shellyplusuni-e08cfe8b1c3c  IP: 192.168.1.62  FW: 1.7.4
 //
 // Provides basic K7 power control when openHAB is unavailable.
 // This is a FAILSAFE only. The primary state machine is in openHAB:

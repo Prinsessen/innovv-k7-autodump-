@@ -6,7 +6,7 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
 
 ```
                           ┌─────────────────────────────────────────┐
-                          │          openHAB 5.1.3 (10.0.5.21)     │
+                          │          openHAB 5.1.3 (192.168.1.10)     │
                           │                                         │
   Traccar FMM920 ────────>│  vehicle-motorcycle-k7-power.js         │
   (Vehicle10_Ignition)     │  ┌───────────────────────────────────┐ │
@@ -28,14 +28,14 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                               ┌───────────────────────────┐
                               │  Shelly Plus Uni           │
                               │  shellyplusuni-e08cfe8b1c3c│
-                              │  IP: 10.0.5.62  FW: 1.7.4 │
+                              │  IP: 192.168.1.62  FW: 1.7.4 │
                               │                            │
                               │  ADC (Voltmeter:100)       │
                               │    <- battery voltage      │
                               │  Relay1 output             │
                               │    -> IRFP9140N gate       │
                               │  WiFi: STA0=Devices (home) │
-                              │        STA1=AgesenAP (mob) │
+                              │        STA1=YourHotspot (mob) │
                               │  BLE: disabled             │
                               │  Script: K7 Failsafe (mJS) │
                               └───────────┬────────────────┘
@@ -65,7 +65,7 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                               ┌───────────┴────────────────┐
                               │  IP65 Enclosure (wall)      │
                               │  ┌────────────────────────┐ │
-                              │  │ Pi 4 (10.0.5.60)       │ │
+                              │  │ Pi 4 (192.168.1.60)       │ │
                               │  │ eth0: home LAN         │ │
                               │  │ ALFA AWUS036ACM (USB3) │ │
                               │  │ innovv-k7-dump.service │ │
@@ -160,7 +160,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video | Mounted on motorcycle |
 | Teltonika FMM920 | GPS tracker | Ignition state + battery voltage | Mounted on motorcycle |
 | Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Charges battery, PRIMARY charger detection via BLE | Garage |
-| Pi 4 | Raspberry Pi 4 | K7 dump service + Victron BLE monitor | Garage IP65 enclosure (10.0.5.60) |
+| Pi 4 | Raspberry Pi 4 | K7 dump service + Victron BLE monitor | Garage IP65 enclosure (192.168.1.60) |
 | ALFA AWUS036ACM | MT7612U, AC1200, USB 3.0 | 5GHz WiFi to K7 AP (mt76 in-kernel driver) | Inside IP65 enclosure with Pi |
 | RP-SMA extension cable | RG174 coax, 2m, RP-SMA M→F | Antenna feed through IP65 enclosure | PG7 cable gland pass-through |
 | 5dBi dual-band antenna | RP-SMA, included with ALFA | 5GHz reception from K7 | Ceiling-mounted above motorcycle |
@@ -170,7 +170,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | File | Purpose |
 |------|---------|
 | `items/motorcycle_k7_power.items` | 22 items: Shelly channels + BLE charger items + virtual state items |
-| `things/shelly.things` | Shelly Plus Uni thing definition (IP: 10.0.5.62) |
+| `things/shelly.things` | Shelly Plus Uni thing definition (IP: 192.168.1.62) |
 | `automation/js/vehicle-motorcycle-k7-power.js` | State machine (10 JSRules): dual-sensor charger detection with BLE + voltage fallback |
 | `innovv-k7/shelly-failsafe-script.js` | Local failsafe for Shelly (mJS, Script ID 1) — runs on-device when openHAB unavailable |
 | `innovv-k7/pi-software/innovv_k7_dump.py` | Pi dump service (**NOT modified**) |
@@ -429,7 +429,7 @@ The Shelly has dual WiFi for home and mobile connectivity:
 | Network | SSID | Purpose |
 |---------|------|---------|
 | STA0 (primary) | Devices | Home WiFi — openHAB control |
-| STA1 (failover) | AgesenAP | Phone hotspot — remote relay control when away from home |
+| STA1 (failover) | YourHotspot | Phone hotspot — remote relay control when away from home |
 
 **BLE** is disabled to reduce parasitic current draw (~5-10mA saved). Use STA1 (phone hotspot) for remote control when away from home.
 
@@ -445,7 +445,7 @@ The Shelly Plus Uni thing is defined in `things/shelly.things`:
 
 ```openhab
 Thing shelly:shellyplusuni:e08cfe8b1c3c "Shelly Plus Uni (Motorcycle K7)" @ "Garage" [
-    deviceIp="10.0.5.62"
+    deviceIp="192.168.1.62"
 ]
 ```
 
@@ -739,10 +739,10 @@ All scenarios tested live with real hardware:
 
 ### Charger not detected
 - **BLE:** Check `MC_Charger_BLE_Online` — should be ON when charger has mains
-- **BLE daemon:** `ssh pi@10.0.5.60 'journalctl -u victron-ble-monitor -f --no-pager'`
+- **BLE daemon:** `ssh pi@192.168.1.60 'journalctl -u victron-ble-monitor -f --no-pager'`
 - **Voltage fallback:** Check `MC_K7_Shelly_Voltage` — should be >13.0V when charger connected
 - **Grace period:** If within 5 min of last re-arm, voltage-only triggers are suppressed (check logs for "Suppressed" messages)
-- Check raw Shelly ADC via `http://10.0.5.62/rpc/Voltmeter.GetStatus?id=100`
+- Check raw Shelly ADC via `http://192.168.1.62/rpc/Voltmeter.GetStatus?id=100`
 
 ### Dump doesn't start
 - Pi dump service is independent — check `systemctl status innovv-k7-dump` on Pi
@@ -757,7 +757,7 @@ All scenarios tested live with real hardware:
 ### BLE shows "Offline" but charger is plugged in
 - Check BLE pairing: `bluetoothctl info EB:A8:21:DD:9C:A0` on Pi
 - Restart daemon: `sudo systemctl restart victron-ble-monitor`
-- Check Pi connectivity: `ping 10.0.5.60`
+- Check Pi connectivity: `ping 192.168.1.60`
 
 ## Monitoring
 
@@ -768,10 +768,10 @@ Watch the state machine in real-time:
 tail -f /var/log/openhab/openhab.log | grep k7_power
 
 # BLE daemon log on Pi
-ssh pi@10.0.5.60 'journalctl -u victron-ble-monitor -f --no-pager'
+ssh pi@192.168.1.60 'journalctl -u victron-ble-monitor -f --no-pager'
 
 # All K7 items
-curl -s http://10.0.5.21:8080/rest/items?tags=Status | python3 -c "
+curl -s http://192.168.1.10:8080/rest/items?tags=Status | python3 -c "
 import sys, json
 items = json.load(sys.stdin)
 for i in items:

@@ -49,7 +49,7 @@ from bleak import BleakClient, BleakError
 
 # ── Configuration ────────────────────────────────────────────────────────────
 CHARGER_ADDR = "EB:A8:21:DD:9C:A0"
-OPENHAB_URL = "http://10.0.5.21:8080/rest/items"
+OPENHAB_URL = "http://192.168.1.10:8080/rest/items"
 POLL_INTERVAL = 30          # seconds between connection cycles
 CONNECT_TIMEOUT = 10        # BLE connect timeout
 DATA_COLLECT_TIME = 12      # seconds to collect data after init (voltage arrives late)

@@ -549,7 +549,7 @@ rules.JSRule({
   execute: function () {
     try {
       var http = actions.HTTP;
-      var json = http.sendHttpGetRequest('http://10.0.5.62/rpc/Wifi.GetStatus', 5000);
+      var json = http.sendHttpGetRequest('http://192.168.1.62/rpc/Wifi.GetStatus', 5000);
       if (json === null) {
         console.debug(LOG + ': Shelly WiFi poll - no response (device offline?)');
         return;

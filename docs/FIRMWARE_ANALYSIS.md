@@ -219,7 +219,7 @@ FTP may be the **most reliable method** for bulk file download as it:
 
 ## Connectivity Challenge
 
-The OpenHAB server (`OpenHab5`, 10.0.5.21) is a **Hyper-V VM** with only a virtual
+The OpenHAB server (`OpenHab5`, 192.168.1.10) is a **Hyper-V VM** with only a virtual
 `eth0` interface — no WiFi hardware, no USB passthrough. It **cannot** connect
 directly to the K7's WiFi hotspot.
 
@@ -369,19 +369,19 @@ package — it sets up the venv, systemd service, NAS mount, and NetworkManager
 connection profile for the K7 hotspot.
 
 ```
-                           Home LAN (10.0.5.x)
+                           Home LAN (192.168.1.x)
                     ┌──────────┬──────────────────┐
                     │          │                   │
               ┌─────┴──┐  ┌───┴────┐         ┌────┴─────┐
               │OpenHAB │  │Synology│         │ Fortinet │
               │  VM    │  │  NAS   │         │   AP     │
-              │10.0.5.21│ │(storage)│         │ (garage) │
+              │192.168.1.10│ │(storage)│         │ (garage) │
               └────────┘  └────────┘         └────┬─────┘
                                                    │ Ethernet
                                               ┌────┴─────┐
                                               │  Pi 4    │
                                               │ (garage) │
-                                              │10.0.5.x  │
+                                              │192.168.1.x  │
                                               └────┬─────┘
                                                    │ WiFi (wlan0)
                                                    │ dedicated to K7
@@ -422,7 +422,7 @@ the WiFi link to K7, so the K7's WiFi speed is the only bottleneck.
 | **NFS/SMB → NAS** | Pi stores footage on Synology NAS over Ethernet (simultaneous) |
 
 No MQTT broker needed — the Pi uses simple HTTP calls to the OpenHAB REST API
-(`http://10.0.5.21:8080/rest/items/K7_Status`) to report dump status.
+(`http://192.168.1.10:8080/rest/items/K7_Status`) to report dump status.
 
 ---
 

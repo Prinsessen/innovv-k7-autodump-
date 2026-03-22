@@ -10,9 +10,9 @@ Standalone BLE monitor daemon for the **Victron Blue Smart IP65 12/10** battery 
 | BLE Address | `EB:A8:21:DD:9C:A0` |
 | BLE Name | "Springfield Charger" |
 | Manufacturer ID | `0x02E1` (Victron Energy) |
-| Host | Raspberry Pi 4 (`10.0.5.60`, user `pi`) |
+| Host | Raspberry Pi 4 (`192.168.1.60`, user `pi`) |
 | BLE Adapter | hci0 (`B8:27:EB:79:D9:95`) |
-| openHAB | `10.0.5.21:8080` |
+| openHAB | `192.168.1.10:8080` |
 
 ## How It Works
 
@@ -87,7 +87,7 @@ When the charger is disconnected from mains power, its BLE radio shuts off. Afte
 ### Pi Setup
 
 ```bash
-# On Pi 4 (10.0.5.60)
+# On Pi 4 (192.168.1.60)
 mkdir -p /home/pi/victron-ble
 python3 -m venv /home/pi/victron-ble/.venv
 source /home/pi/victron-ble/.venv/bin/activate
@@ -113,8 +113,8 @@ bluetoothctl
 
 ```bash
 # From openHAB host
-scp -i ~/.ssh/id_ed25519 victron_ble_monitor.py pi@10.0.5.60:/home/pi/victron-ble/
-scp -i ~/.ssh/id_ed25519 victron-ble-monitor.service pi@10.0.5.60:/tmp/
+scp -i ~/.ssh/id_ed25519 victron_ble_monitor.py pi@192.168.1.60:/home/pi/victron-ble/
+scp -i ~/.ssh/id_ed25519 victron-ble-monitor.service pi@192.168.1.60:/tmp/
 
 # On Pi
 sudo cp /tmp/victron-ble-monitor.service /etc/systemd/system/
@@ -164,7 +164,7 @@ All configuration is at the top of `victron_ble_monitor.py`:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `CHARGER_ADDR` | `EB:A8:21:DD:9C:A0` | BLE MAC address of charger |
-| `OPENHAB_URL` | `http://10.0.5.21:8080/rest/items` | openHAB REST endpoint |
+| `OPENHAB_URL` | `http://192.168.1.10:8080/rest/items` | openHAB REST endpoint |
 | `POLL_INTERVAL` | `30` | Seconds between BLE poll cycles |
 | `DATA_COLLECT_TIME` | `12` | Seconds to collect data per connection |
 | `OFFLINE_THRESHOLD` | `3` | Consecutive failures before marking offline |
@@ -215,7 +215,7 @@ victron-ble/
 ├── victron-ble-monitor.service     # Systemd service file
 └── requirements.txt                # Python dependencies
 
-# Deployed on Pi (10.0.5.60):
+# Deployed on Pi (192.168.1.60):
 /home/pi/victron-ble/
 ├── victron_ble_monitor.py          # Active daemon
 └── .venv/                          # Python virtual environment

@@ -2,13 +2,13 @@
 // Shelly Devices
 // =============================================================================
 // Shelly Plus Uni on motorcycle — K7 dashcam auto-power relay + ADC voltage
-// Device: shellyplusuni-e08cfe8b1c3c  MAC: E08CFE8B1C3C  IP: 10.0.5.62
+// Device: shellyplusuni-e08cfe8b1c3c  MAC: E08CFE8B1C3C  IP: 192.168.1.62
 // Firmware: 1.7.4 (20260120)
 // Model: SNSN-0043X  Gen: 2
 // =============================================================================
 
 Thing shelly:shellyplusuni:e08cfe8b1c3c "Shelly Plus Uni (Motorcycle K7)" @ "Garage" [
-    deviceIp="10.0.5.62",
+    deviceIp="192.168.1.62",
     userId="",
     password=""
 ]
