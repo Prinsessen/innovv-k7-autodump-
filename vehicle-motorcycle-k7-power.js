@@ -27,6 +27,7 @@ const CHARGER_OFF_V = 12.7;  // Voltage to CONFIRM charger removed (fallback)
 const LOW_BATT_V  = 12.0;
 const STAB_SEC    = 60;
 const MAX_ON_MIN  = 30;
+const NO_BLE_MAX_ON_MIN = 5;  // Shorter relay timeout when BLE/Pi4 unavailable (dump can't complete)
 const COOLDOWN_S  = 30;
 const IGN_DEBOUNCE_S = 5;
 const BLE_PLAUSIBLE_DELTA = 2.0;  // Max V difference between BLE charger and Shelly battery
@@ -190,6 +191,14 @@ function startChargerSequence(voltage, source) {
   var bleConnected = isBLEConnected();
   if (!bleCharging && !bleConnected && voltage <= CHARGER_ON_V) return;
 
+  // BLE/Pi4 connectivity gate: without Pi4, K7_Dump_Status never updates
+  // so relay would stay ON until MAX_ON_MIN safety timeout with no benefit.
+  // Block voltage-only triggers; Rule 8 (BLE Online) will start when Pi4 is back.
+  if (!bleCharging && !bleConnected && !isBLEOnline()) {
+    console.info(LOG + ': Voltage suggests charger (V=' + voltage.toFixed(1) + ') but BLE/Pi4 offline — waiting for connectivity');
+    return;
+  }
+
   // Grace period: after re-arm from charger-active state, battery voltage
   // lingers above CHARGER_ON_V for minutes. Suppress voltage-only detection
   // for 5 min. BLE charging/connected confirmation overrides immediately.
@@ -230,6 +239,16 @@ function startChargerSequence(voltage, source) {
 
       if (confirmed) {
         var method = (bleChg || bleCon) ? 'BLE ' + items.getItem('MC_Charger_State').state : 'Voltage ' + recheck.toFixed(1) + 'V (no BLE)';
+
+        // SAFETY: If BLE went offline during stabilisation, don't turn relay ON.
+        // Without Pi4/BLE, dump completion can't be tracked → relay would hang
+        // ON until MAX_ON_MIN timeout. Back to PARKED; Rule 8 will retry when BLE returns.
+        if (!bleOnline) {
+          console.warn(LOG + ': Stabilisation: voltage OK (' + recheck.toFixed(1) + 'V) but BLE/Pi4 offline — NOT turning relay ON');
+          rearmToParked('Voltage confirms charger but BLE offline — waiting for Pi4');
+          return;
+        }
+
         console.info(LOG + ': Stabilisation complete [' + method + '] [' + getBLEInfo() + '] V=' + recheck.toFixed(1) + 'V - relay ON');
         setState(STATES.TRANSFERRING, 'Charger confirmed: ' + method);
         relayOn('Charger confirmed: ' + method);
@@ -510,6 +529,11 @@ rules.JSRule({
 // Allows manual relay ON (e.g. from sitemap) to trigger a dump from DUMP_DONE
 // or PARKED state. Useful when charger is still connected and you want to
 // force another dump without removing/reconnecting the charger.
+//
+// Race condition fix: Rule 6 (state tracker) fires on the same ON event and
+// counter-punches OFF before this rule runs. We set state to TRANSFERRING
+// FIRST, then re-send ON. Since state is now TRANSFERRING, Rule 6 will NOT
+// counter-punch the re-sent ON (TRANSFERRING is not in counter-punch list).
 // =============================================================================
 rules.JSRule({
   name: 'K7 Power - Manual Relay Override',
@@ -519,14 +543,25 @@ rules.JSRule({
     try {
       var currentState = getState();
       if (currentState === STATES.DUMP_DONE || currentState === STATES.PARKED) {
-        console.info(LOG + ': Manual relay ON - starting dump from ' + currentState);
+        // Set state BEFORE re-sending ON — prevents Rule 6 counter-punch race
         setState(STATES.TRANSFERRING, 'Manual relay ON');
+        console.info(LOG + ': Manual relay ON - starting dump from ' + currentState);
+        // Re-send ON: Rule 6 may have already counter-punched OFF before we ran.
+        // Now that state is TRANSFERRING, Rule 6 won't counter-punch again.
+        items.getItem('MC_K7_Relay').sendCommand('ON');
+
+        // Shorter timeout when BLE/Pi4 unavailable — dump can't complete without it
+        var bleAvailable = isBLEOnline();
+        var timeout = bleAvailable ? MAX_ON_MIN : NO_BLE_MAX_ON_MIN;
+        if (!bleAvailable) {
+          console.warn(LOG + ': BLE/Pi4 offline — using ' + NO_BLE_MAX_ON_MIN + 'min timeout (dump tracking unavailable)');
+        }
         cancelTimer('maxOnTimer');
         var maxOnTimer = actions.ScriptExecution.createTimer(
-          time.ZonedDateTime.now().plusMinutes(MAX_ON_MIN),
+          time.ZonedDateTime.now().plusMinutes(timeout),
           function () {
-            console.warn(LOG + ': SAFETY TIMEOUT - relay ON for ' + MAX_ON_MIN + 'min - forcing OFF');
-            relayOff('Safety timeout ' + MAX_ON_MIN + 'min');
+            console.warn(LOG + ': SAFETY TIMEOUT - relay ON for ' + timeout + 'min - forcing OFF');
+            relayOff('Safety timeout ' + timeout + 'min');
             setState(STATES.DUMP_DONE, 'Safety timeout');
           }
         );
@@ -549,7 +584,7 @@ rules.JSRule({
   execute: function () {
     try {
       var http = actions.HTTP;
-      var json = http.sendHttpGetRequest('http://192.168.1.62/rpc/Wifi.GetStatus', 5000);
+      var json = http.sendHttpGetRequest('http://10.0.5.62/rpc/Wifi.GetStatus', 5000);
       if (json === null) {
         console.debug(LOG + ': Shelly WiFi poll - no response (device offline?)');
         return;
