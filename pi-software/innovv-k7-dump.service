@@ -3,9 +3,11 @@ Description=INNOVV K7 Dashcam Footage Dump Service
 Documentation=file:///opt/innovv-k7/README.md
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 # Ensure WiFi hardware is ready
-After=sys-subsystem-net-devices-wlan0.device
+After=sys-subsystem-net-devices-wlan1.device
 
 [Service]
 Type=simple
@@ -22,8 +24,6 @@ ExecStop=/bin/kill -SIGTERM $MAINPID
 # Restart policy: restart on failure with increasing delay
 Restart=on-failure
 RestartSec=30
-StartLimitBurst=5
-StartLimitIntervalSec=300
 
 # Resource limits
 Nice=10
@@ -38,14 +38,14 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=innovv-k7
 
-# Security hardening (as much as possible while needing wlan0)
+# Security hardening (as much as possible while needing wlan1)
 ProtectSystem=strict
 ReadWritePaths=/opt/innovv-k7 /mnt/nas/dashcam /run/wpa_supplicant /var/run /var/log
 ProtectHome=yes
 NoNewPrivileges=no
 PrivateTmp=yes
 
-# Network namespace not possible (we need wlan0 control)
+# Network namespace not possible (we need wlan1 control)
 # Capabilities needed: CAP_NET_ADMIN for WiFi, CAP_NET_RAW for scanning
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 

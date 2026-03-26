@@ -1,11 +1,11 @@
 """
 WiFi Manager for INNOVV K7 connection.
 
-Manages wlan0 on the Pi 4 to scan for and connect to the K7's WiFi hotspot.
+Manages the USB WiFi dongle (wlan1) on the Pi 4 to scan for and connect to the K7's WiFi hotspot.
 Uses wpa_supplicant for connection management.
 
 The Pi's Ethernet (eth0) remains connected to the home LAN at all times.
-wlan0 is dedicated exclusively to the K7 connection.
+The USB WiFi interface is dedicated exclusively to the K7 connection.
 """
 
 import ipaddress
@@ -97,9 +97,10 @@ class WiFiManager:
                 scan_output = result.stdout
 
         # Still not found — full spectrum scan (2.4 + 5 GHz, slower)
+        # Note: "ap-force" removed — hangs on mt76x2u (USB dongle) driver
         if scan_output is None:
             result = self._run(
-                [_IW, self.interface, "scan", "ap-force"],
+                [_IW, self.interface, "scan"],
                 timeout=25,
             )
             if result.returncode == 0 and self.ssid in result.stdout:
@@ -127,7 +128,7 @@ class WiFiManager:
         """Parse iw scan output to extract freq and BSSID for our SSID.
 
         iw scan output format:
-            BSS aa:bb:cc:dd:ee:ff(on wlan0)
+            BSS aa:bb:cc:dd:ee:ff(on wlan1)
                 ...
                 freq: 5180
                 ...
@@ -157,7 +158,7 @@ class WiFiManager:
 
     def connect(self) -> bool:
         """
-        Connect wlan0 to the K7 WiFi hotspot.
+        Connect to the K7 WiFi hotspot via the configured interface.
 
         Uses wpa_supplicant with a temporary config, then assigns a static IP
         (192.168.1.100/24). Static IP avoids DHCP issues with systemd sandboxing.
@@ -185,11 +186,6 @@ class WiFiManager:
         # bssid auto-detected from scan results
         # scan_ssid=1 for hidden/directed connection
         # ieee80211w=0 disables management frame protection (K7 doesn't support it)
-        # NOTE: On 5 GHz, requires brcmfmac MINIMAL firmware (7.45.241) — the
-        #       standard firmware (7.45.265) has a bug causing ASSOC_REJECT
-        #       with the K7's RTL8821CS AP. Set via:
-        #       update-alternatives --set cyfmac43455-sdio.bin \
-        #         /lib/firmware/cypress/cyfmac43455-sdio-minimal.bin
 
         # Build optional scan_freq and bssid lines from auto-detected values
         extra_network_opts = ""
@@ -264,7 +260,7 @@ network={{
         ])
         time.sleep(1)
 
-        # Remove any default route that might appear via wlan0
+        # Remove any default route that might appear via WiFi
         # (eth0 must keep the default route for LAN/SSH access)
         self._run([
             _IP, "route", "del", "default",
@@ -276,7 +272,7 @@ network={{
         if ip:
             log.info(f"Connected! IP: {ip}")
 
-            # Add route for K7 subnet via wlan0 (keep default route on eth0)
+            # Add route for K7 subnet via WiFi (keep default route on eth0)
             self._run([
                 _IP, "route", "add",
                 self._subnet, "dev", self.interface,
@@ -289,7 +285,7 @@ network={{
             return False
 
     def disconnect(self):
-        """Disconnect wlan0 from K7 WiFi."""
+        """Disconnect from K7 WiFi."""
         log.info(f"Disconnecting {self.interface}...")
 
         # Stop wpa_supplicant
@@ -333,7 +329,7 @@ network={{
             _IP, "-4", "-o", "addr", "show", self.interface,
         ])
         if result.returncode == 0 and result.stdout.strip():
-            # Parse: "3: wlan0    inet 192.168.1.20/24 ..."
+            # Parse: "3: wlan1    inet 192.168.1.20/24 ..."
             parts = result.stdout.strip().split()
             for i, part in enumerate(parts):
                 if part == "inet" and i + 1 < len(parts):

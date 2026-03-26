@@ -4,11 +4,11 @@ INNOVV K7 Dashcam Auto-Dump Service
 
 Main orchestrator that runs on a Raspberry Pi 4 in the garage.
 - Ethernet: always connected to home LAN (NAS, OpenHAB)
-- WiFi (wlan0): dedicated to connecting to K7 hotspot
+- WiFi (wlan1 USB): dedicated to connecting to K7 hotspot
 
 Flow:
   1. Wait for K7 WiFi SSID to appear (scan periodically)
-  2. Connect wlan0 to K7 hotspot
+  2. Connect to K7 hotspot via USB WiFi
   3. Send heartbeat, get file listing via HTTP API
   4. Download new files via HTTP directly to NAS mount
   5. Report status to OpenHAB REST API

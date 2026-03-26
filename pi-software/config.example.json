@@ -2,7 +2,7 @@
     "k7_wifi": {
         "ssid": "INNOVV_K7",
         "password": "12345678",
-        "interface": "wlan0",
+        "interface": "wlan1",
         "camera_ip": "192.168.1.254",
         "static_ip": "192.168.1.100/24",
         "country": "DK",
