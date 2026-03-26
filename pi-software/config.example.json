@@ -2,7 +2,7 @@
     "k7_wifi": {
         "ssid": "INNOVV_K7",
         "password": "12345678",
-        "interface": "wlan0",
+        "interface": "wlan1",
         "camera_ip": "192.168.1.254",
         "static_ip": "192.168.1.100/24",
         "country": "DK",
@@ -20,7 +20,7 @@
         "delete_after_verified_download": true
     },
     "openhab": {
-        "url": "http://192.168.1.10:8080"
+        "url": "http://10.0.5.21:8080"
     },
     "safety": {
         "max_dump_duration_min": 30,

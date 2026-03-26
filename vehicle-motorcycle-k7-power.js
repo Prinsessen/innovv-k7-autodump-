@@ -19,6 +19,8 @@
 const { rules, triggers, items, actions, time } = require('openhab');
 
 const LOG = 'k7_power';
+const SHELLY_IP = '10.0.5.62';  // Shelly Plus Uni IP address
+const ADC_OFFSET = 0.27;        // ADC calibration offset (Fluke 175 ref 13.13V, Shelly raw 12.86V)
 // Voltage thresholds — FALLBACK only (used when BLE is unavailable)
 const CHARGER_ON_V  = 13.0;  // Voltage to DETECT charger (fallback)
 const CHARGER_OFF_V = 12.7;  // Voltage to CONFIRM charger removed (fallback)
@@ -50,14 +52,37 @@ function setState(newState, reason) {
   console.info(LOG + ': State -> ' + newState + (reason ? ' (' + reason + ')' : ''));
 }
 
+// Direct HTTP relay control — bypasses broken Shelly binding (5.1.3 handleCommand never fires)
 function relayOn(reason) {
-  items.getItem('MC_K7_Relay').sendCommand('ON');
-  console.info(LOG + ': Relay ON - ' + reason);
+  try {
+    var http = actions.HTTP;
+    var url = 'http://' + SHELLY_IP + '/rpc/Switch.Set?id=0&on=true';
+    var resp = http.sendHttpGetRequest(url, 5000);
+    if (resp !== null) {
+      items.getItem('MC_K7_Relay').postUpdate('ON');
+      console.info(LOG + ': Relay ON [HTTP direct] - ' + reason);
+    } else {
+      console.error(LOG + ': Relay ON FAILED - no HTTP response from Shelly');
+    }
+  } catch (e) {
+    console.error(LOG + ': Relay ON error: ' + e.message);
+  }
 }
 
 function relayOff(reason) {
-  items.getItem('MC_K7_Relay').sendCommand('OFF');
-  console.info(LOG + ': Relay OFF - ' + reason);
+  try {
+    var http = actions.HTTP;
+    var url = 'http://' + SHELLY_IP + '/rpc/Switch.Set?id=0&on=false';
+    var resp = http.sendHttpGetRequest(url, 5000);
+    if (resp !== null) {
+      items.getItem('MC_K7_Relay').postUpdate('OFF');
+      console.info(LOG + ': Relay OFF [HTTP direct] - ' + reason);
+    } else {
+      console.error(LOG + ': Relay OFF FAILED - no HTTP response from Shelly');
+    }
+  } catch (e) {
+    console.error(LOG + ': Relay OFF error: ' + e.message);
+  }
 }
 
 function cancelTimer(timerName) {
@@ -548,7 +573,7 @@ rules.JSRule({
         console.info(LOG + ': Manual relay ON - starting dump from ' + currentState);
         // Re-send ON: Rule 6 may have already counter-punched OFF before we ran.
         // Now that state is TRANSFERRING, Rule 6 won't counter-punch again.
-        items.getItem('MC_K7_Relay').sendCommand('ON');
+        relayOn('Manual re-send after state set');
 
         // Shorter timeout when BLE/Pi4 unavailable — dump can't complete without it
         var bleAvailable = isBLEOnline();
@@ -574,32 +599,72 @@ rules.JSRule({
 });
 
 // =============================================================================
-// Rule 5: Shelly WiFi Status Poller (SSID + RSSI dBm)
-// Polls Shelly API every 60s for WiFi details not exposed by binding channels.
+// Rule 5: Shelly Full Status Poller (replaces binding — all channels via HTTP)
+// Polls Shelly.GetStatus every 30s for: voltage (ADC), relay state, WiFi,
+// uptime, heartbeat, SSID, RSSI. This replaces all Shelly binding channels.
+//
+// MIGRATION NOTE (2026-03-26): Shelly binding 5.1.3 has a bug where
+// handleCommand() never fires for shellyplusuni. All relay control and
+// status monitoring is now done via direct HTTP to the Shelly RPC API.
 // =============================================================================
 rules.JSRule({
-  name: 'K7 Power - Shelly WiFi Poll',
-  description: 'Poll Shelly Plus Uni for SSID and RSSI dBm',
-  triggers: [triggers.GenericCronTrigger('0 * * * * ?')],
+  name: 'K7 Power - Shelly Status Poll',
+  description: 'Poll Shelly Plus Uni for all status (replaces broken binding)',
+  triggers: [triggers.GenericCronTrigger('*/30 * * * * ?')],
   execute: function () {
     try {
       var http = actions.HTTP;
-      var json = http.sendHttpGetRequest('http://10.0.5.62/rpc/Wifi.GetStatus', 5000);
+      var json = http.sendHttpGetRequest('http://' + SHELLY_IP + '/rpc/Shelly.GetStatus', 5000);
       if (json === null) {
-        console.debug(LOG + ': Shelly WiFi poll - no response (device offline?)');
+        console.debug(LOG + ': Shelly poll - no response (device offline?)');
         return;
       }
       var data = JSON.parse(json);
-      var ssid = data.ssid || '';
-      var rssi = data.rssi;
-      if (ssid) {
-        items.getItem('MC_K7_Shelly_SSID').postUpdate(ssid);
+
+      // --- Voltage (ADC with calibration offset) ---
+      if (data['voltmeter:100'] && typeof data['voltmeter:100'].voltage === 'number') {
+        var rawV = data['voltmeter:100'].voltage;
+        var calibV = rawV + ADC_OFFSET;
+        items.getItem('MC_K7_Shelly_Voltage').postUpdate(calibV.toFixed(2));
       }
-      if (typeof rssi === 'number') {
-        items.getItem('MC_K7_Shelly_RSSI').postUpdate(rssi);
+
+      // --- Relay state sync (switch:0 = K7 MOSFET relay) ---
+      if (data['switch:0']) {
+        var relayOn = data['switch:0'].output;
+        var relayItem = items.getItem('MC_K7_Relay');
+        var expectedState = relayOn ? 'ON' : 'OFF';
+        if (relayItem.state !== expectedState) {
+          console.info(LOG + ': Shelly relay sync: device=' + expectedState + ' OH=' + relayItem.state + ' — correcting');
+          relayItem.postUpdate(expectedState);
+        }
       }
+
+      // --- WiFi (SSID + RSSI) ---
+      if (data.wifi) {
+        if (data.wifi.ssid) {
+          items.getItem('MC_K7_Shelly_SSID').postUpdate(data.wifi.ssid);
+        }
+        if (typeof data.wifi.rssi === 'number') {
+          items.getItem('MC_K7_Shelly_RSSI').postUpdate(data.wifi.rssi);
+          // Map RSSI to signal strength 0-4
+          var rssi = data.wifi.rssi;
+          var signal = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -72 ? 2 : rssi >= -80 ? 1 : 0;
+          items.getItem('MC_K7_Shelly_WiFi_Signal').postUpdate(signal);
+        }
+      }
+
+      // --- Uptime ---
+      if (data.sys && typeof data.sys.uptime === 'number') {
+        items.getItem('MC_K7_Shelly_Uptime').postUpdate(data.sys.uptime);
+      }
+
+      // --- Heartbeat (timestamp of successful poll) ---
+      items.getItem('MC_K7_Shelly_Heartbeat').postUpdate(
+        time.ZonedDateTime.now().format(time.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+      );
+
     } catch (e) {
-      console.debug(LOG + ': Shelly WiFi poll error: ' + e.message);
+      console.debug(LOG + ': Shelly poll error: ' + e.message);
     }
   }
 });
@@ -624,7 +689,7 @@ rules.JSRule({
       var currentState = getState();
       if (currentState === STATES.DUMP_DONE || currentState === STATES.COOLDOWN || currentState === STATES.PARKED || currentState === STATES.CHARGING || currentState === STATES.LOW_BATTERY) {
         console.warn(LOG + ': Relay ON detected in ' + currentState + ' - unexpected, counter-punching OFF');
-        items.getItem('MC_K7_Relay').sendCommand('OFF');
+        relayOff('Counter-punch: unexpected ON in ' + currentState);
         return;  // Don't update Relay_Since for the brief blip
       }
       items.getItem('MC_K7_Relay_Since').postUpdate(
@@ -799,7 +864,7 @@ rules.JSRule({
       var mustBeOff = [STATES.PARKED, STATES.DUMP_DONE, STATES.COOLDOWN, STATES.LOW_BATTERY];
       if (relayState === 'ON' && mustBeOff.indexOf(currentState) >= 0) {
         console.warn(LOG + ': WATCHDOG: Relay is ON but state is ' + currentState + ' \u2014 forcing OFF');
-        items.getItem('MC_K7_Relay').sendCommand('OFF');
+        relayOff('WATCHDOG: relay ON in ' + currentState);
         items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: relay ON in ' + currentState + ' \u2014 forced OFF');
       }
     } catch (e) {

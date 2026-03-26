@@ -14,26 +14,29 @@
 //
 // ADC Calibration (2026-03-11):
 //   Fluke 175 reference: 13.13V, Shelly raw ADC: 12.86V → offset +0.27V
-//   Applied via system:offset profile on MC_K7_Shelly_Voltage channel.
+//   Applied in JS poller (+0.27V added to raw Shelly API reading).
 //   Re-calibrate if Shelly firmware changes or wiring is modified.
 //
-// Device: shellyplusuni-e08cfe8b1c3c  IP: 192.168.1.62  FW: 1.7.4
+// Device: shellyplusuni-e08cfe8b1c3c  IP: 10.0.5.62  FW: 1.7.4
 // Thing:  shelly:shellyplusuni:e08cfe8b1c3c
 // =============================================================================
 
 Group   gMC_K7_Power                            "K7 Auto-Power"                 <energy>        (gK7)   ["Equipment"]
 
 // --- Shelly Plus Uni Channels ---
-// Device: shellyplusuni-e08cfe8b1c3c  IP: 192.168.1.62  MAC: E08CFE8B1C3C
-Switch  MC_K7_Relay         "K7 Power Relay [MAP(k7_onoff.map):%s]"     <k7-relay-blue> (gMC_K7_Power)  ["Switch"]      {channel="shelly:shellyplusuni:e08cfe8b1c3c:relay1#output"}
+// Device: shellyplusuni-e08cfe8b1c3c  IP: 10.0.5.62  MAC: E08CFE8B1C3C
+// MIGRATED 2026-03-26: Shelly binding broken (handleCommand never fires in 5.1.3)
+// All items now virtual — updated via direct HTTP poller in JS rules.
+// Relay control via HTTP to http://10.0.5.62/rpc/Switch.Set?id=0&on=true|false
+Switch  MC_K7_Relay         "K7 Power Relay [MAP(k7_onoff.map):%s]"     <k7-relay-blue> (gMC_K7_Power)  ["Switch"]      {autoupdate="false"}
 
-Number:ElectricPotential MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"  <k7-battery-green>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:e08cfe8b1c3c:sensors#voltage"}
+Number  MC_K7_Shelly_Voltage "Shelly Battery [%.2f V]"                   <k7-battery-green>       (gMC_K7_Power)  ["Measurement"]
 
-// --- Shelly Device Status Channels ---
-Number  MC_K7_Shelly_WiFi_Signal "Shelly WiFi [%d /4]"                  <network>       (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:e08cfe8b1c3c:device#wifiSignal"}
-Number:Time MC_K7_Shelly_Uptime  "Shelly Uptime [%.0f s]"              <time>          (gMC_K7_Power)  ["Measurement"]  {channel="shelly:shellyplusuni:e08cfe8b1c3c:device#uptime"}
-DateTime MC_K7_Shelly_LastUpdate "Shelly Last Update [%1$td.%1$tm %1$tH:%1$tM]" <time>  (gMC_K7_Power)  ["Status"]       {channel="shelly:shellyplusuni:e08cfe8b1c3c:sensors#lastUpdate"}
-DateTime MC_K7_Shelly_Heartbeat  "Shelly Heartbeat [%1$td.%1$tm %1$tH:%1$tM]"  <time>  (gMC_K7_Power)  ["Status"]       {channel="shelly:shellyplusuni:e08cfe8b1c3c:device#heartBeat"}
+// --- Shelly Device Status (HTTP-polled) ---
+Number  MC_K7_Shelly_WiFi_Signal "Shelly WiFi [%d /4]"                  <network>       (gMC_K7_Power)  ["Measurement"]
+Number  MC_K7_Shelly_Uptime  "Shelly Uptime [%.0f s]"                   <time>          (gMC_K7_Power)  ["Measurement"]
+DateTime MC_K7_Shelly_LastUpdate "Shelly Last Update [%1$td.%1$tm %1$tH:%1$tM]" <time>  (gMC_K7_Power)  ["Status"]
+DateTime MC_K7_Shelly_Heartbeat  "Shelly Heartbeat [%1$td.%1$tm %1$tH:%1$tM]"  <time>  (gMC_K7_Power)  ["Status"]
 
 // --- Shelly API-polled Items (updated via JS rule) ---
 Number  MC_K7_Shelly_RSSI    "Shelly RSSI [%d dBm]"                    <network>       (gMC_K7_Power)  ["Measurement"]
