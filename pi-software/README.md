@@ -1,23 +1,23 @@
-# INNOVV K7 Auto-Dump — Pi 4 Software
+# INNOVV K7 Auto-Dump — Pi 3 Software
 
 Automated footage download from INNOVV K7 dual-channel dashcam to NAS via WiFi.
 
 ## Architecture
 
 ```
-[K7 Dashcam]  ←WiFi 5GHz→  [Pi 4 wlan0]  ←Ethernet→  [OpenHAB + NAS]
+[K7 Dashcam]  ←WiFi 5GHz→  [Pi 3 wlan1]  ←Ethernet→  [OpenHAB + NAS]
    (bike)                   (garage)           (house)
 ```
 
-The Pi 4 uses **dual networking**:
-- **wlan0** — Connects to K7's WiFi hotspot (5 GHz, ch 36) for HTTP downloads
+The Pi 3 uses **dual networking**:
+- **wlan1** — USB WiFi dongle (MediaTek MT7612U) connects to K7's WiFi hotspot (5 GHz, ch 36) for HTTP downloads
 - **eth0** — Home LAN (Ethernet) for NAS writes and OpenHAB API calls
 
 ## How It Works
 
 1. K7 powers on when bike ignition starts (always recording)
 2. Pi service detects K7 SSID `INNOVV_K7` via `iw scan`
-3. Pi connects wlan0, sends heartbeat, recursively lists all folders
+3. Pi connects wlan1, sends heartbeat, recursively lists all folders
 4. New files downloaded via HTTP to NAS mount (over eth0)
 5. Each file: SHA-256 during download → fsync → NAS read-back verification
 6. Only after 100% verification: file deleted from K7 SD card
@@ -102,11 +102,9 @@ of the K7's built-in web server directory pages.
 
 ## Pi Hardware & WiFi
 
-### Critical WiFi Firmware Requirement
+### WiFi: USB Dongle (MT7612U)
 
-The Pi 4's BCM43455 WiFi chip **MUST use minimal firmware** (7.45.241) to
-connect to the K7's RTL8821CS access point. The standard Cypress firmware
-causes `ASSOC_REJECT` errors.
+The onboard BCM43455 WiFi (wlan0) had compatibility issues with the K7's RTL8821CS access point. An **ALFA AWUS036ACM** USB WiFi dongle (MediaTek MT7612U, driver `mt76x2u`) is used instead on **wlan1**. This provides reliable 5 GHz 802.11ac connectivity without firmware hacks.
 
 ```bash
 # Set minimal firmware (ALREADY CONFIGURED — survives reboot)
@@ -120,11 +118,11 @@ sudo update-alternatives --set cyfmac43455-sdio.bin \
 
 | Interface | Purpose | IP | Config |
 |-----------|---------|-----|--------|
-| eth0 | Home LAN (NAS, OpenHAB) | DHCP (192.168.1.60) | Default route |
-| wlan0 | K7 WiFi (downloads) | Static 192.168.1.100/24 | No default route |
+| eth0 | Home LAN (NAS, OpenHAB) | DHCP (10.0.5.60) | Default route |
+| wlan1 | K7 WiFi (downloads) | Static 192.168.1.100/24 | No default route |
 
-wlan0 is isolated from dhcpcd via `denyinterfaces wlan0` to prevent
-routing conflicts. The dump service manages wlan0 directly via wpa_supplicant.
+wlan1 is isolated from dhcpcd via `denyinterfaces wlan1` to prevent
+routing conflicts. The dump service manages wlan1 directly via wpa_supplicant.
 
 ## Verified Transfer Pipeline
 
@@ -203,6 +201,7 @@ Switch      K7_Dump_Movie_E         "Dump Movie_E (Loop Video) [MAP(k7_onoff.map
 
 // --- Pi health ---
 Number      K7_Pi_Disk_Free_MB      "Pi SD Free [%d MB]"                        <k7-disk-cyan>      (gK7)
+Number      K7_Pi_Temperature       "Pi Temperature [%.1f °C]"                  <k7-temp-red-v1>    (gK7)
 ```
 
 ### Live Updates
@@ -214,6 +213,7 @@ The dump service pushes updates to OpenHAB throughout the cycle:
 - **Files/MB downloaded**: Updated after every file
 - **Verified/Deleted/Pending**: Updated after every file's delete operation
 - **Pi disk free**: Reported at start of each dump cycle, warns if < 500MB
+- **Pi temperature**: SoC temperature reported on startup + every 5 min in idle loop, warns if ≥ 80°C
 
 ### Movie_E Toggle (K7_Dump_Movie_E)
 
@@ -241,7 +241,7 @@ Size:     ~1 GB compressed (15 GB SD, 3 GB used)
 ```
 
 **Important:** The backup script stops the dump service during backup to
-avoid CPU/IO starvation (gzip + dd saturates the Pi 4). The service is
+avoid CPU/IO starvation (gzip + dd saturates the Pi 3). The service is
 automatically restarted after backup completes (even on failure via trap).
 
 Nothing is written to the Pi's SD card — `dd | gzip` pipes directly to NAS.
@@ -253,12 +253,12 @@ To restore: `gunzip -c backup.img.gz | dd of=/dev/sdX bs=4M`
 | Component | How | Location |
 |-----------|-----|----------|
 | Dump service | systemd enabled | `/etc/systemd/system/innovv-k7-dump.service` |
-| NAS mount | fstab nofail | `//your-nas-server.local/...` → `/mnt/nas/dashcam` |
+| NAS mount | fstab nofail | `//Rackstation2.agesen.dk/...` → `/mnt/nas/dashcam` |
 | NAS credentials | file | `/root/.nas-creds` (mode 0600) |
 | Download DB | SQLite | `/opt/innovv-k7/downloaded_files.db` |
 | Config | JSON | `/opt/innovv-k7/config.json` |
-| WiFi firmware | update-alternatives | `cyfmac43455-sdio-minimal.bin` |
-| wlan0 isolation | dhcpcd.conf | `denyinterfaces wlan0` |
+| WiFi dongle | USB | ALFA AWUS036ACM (MT7612U) on wlan1 |
+| wlan1 isolation | dhcpcd.conf | `denyinterfaces wlan1` |
 | Backup cron | root crontab | `0 3 1 * * /opt/innovv-k7/backup-sd.sh` |
 | Python venv | on disk | `/opt/innovv-k7/.venv/` |
 
@@ -269,7 +269,7 @@ To restore: `gunzip -c backup.img.gz | dd of=/dev/sdX bs=4M`
     "k7_wifi": {
         "ssid": "INNOVV_K7",
         "password": "12345678",
-        "interface": "wlan0",
+        "interface": "wlan1",
         "camera_ip": "192.168.1.254",
         "static_ip": "192.168.1.100/24",
         "country": "DK",
@@ -287,7 +287,7 @@ To restore: `gunzip -c backup.img.gz | dd of=/dev/sdX bs=4M`
         "delete_after_verified_download": true
     },
     "openhab": {
-        "url": "http://192.168.1.10:8080"
+        "url": "http://10.0.5.21:8080"
     },
     "safety": {
         "max_dump_duration_min": 30,
@@ -342,7 +342,7 @@ cat /var/log/innovv-k7-backup.log
 - **NAS space check** — stops if < 10 GB free (checked every 10 files)
 - **Pi disk monitoring** — warns OpenHAB if Pi SD < 500 MB free
 - **SQLite tracking** — never re-downloads verified files
-- **WiFi isolation** — wlan0 has no default route, cannot disrupt eth0
+- **WiFi isolation** — wlan1 has no default route, cannot disrupt eth0
 - **Graceful shutdown** — SIGTERM cancels in-progress downloads within milliseconds
   (partial files remain as `.partial` for resume next cycle)
 - **Incomplete download protection** — completeness check runs BEFORE rename;
@@ -361,13 +361,13 @@ cat /var/log/innovv-k7-backup.log
 **K7 WiFi not visible:**
 - Is the K7 powered on? K7 broadcasts WiFi whenever powered
 - K7 boots in ~20 seconds, WiFi may need 30s
-- Run: `sudo iw wlan0 scan | grep -i innovv`
-- Verify minimal firmware: `ls -la /etc/alternatives/cyfmac43455-sdio.bin`
+- Run: `sudo iw wlan1 scan | grep -i innovv`
+- Verify USB dongle is present: `lsusb | grep MediaTek`
 
-**ASSOC_REJECT on WiFi connect:**
-- BCM43455 needs minimal firmware (7.45.241)
-- `sudo update-alternatives --set cyfmac43455-sdio.bin /lib/firmware/cypress/cyfmac43455-sdio-minimal.bin`
-- Reboot Pi after firmware change
+**WiFi connect fails:**
+- Check wlan1 is UP: `ip link show wlan1`
+- Check driver loaded: `lsmod | grep mt76`
+- Try manual scan: `sudo iw wlan1 scan`
 
 **Downloads fail with Connection refused:**
 - K7 HTTP server may be busy (especially after bulk deletes)
