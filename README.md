@@ -6,11 +6,11 @@ Automated INNOVV K7 dashcam footage backup via Shelly Plus Uni, IRFP9140N MOSFET
 
 When you plug in your motorcycle battery charger:
 
-1. **Victron BLE daemon** (on Pi 4) detects charger is actively charging via BLE GATT — or **Shelly ADC** detects high voltage (>13.0V) as fallback
+1. **Victron BLE daemon** (on Pi 3) detects charger is actively charging via BLE GATT — or **Shelly ADC** detects high voltage (>13.0V) as fallback
 2. **openHAB state machine** (10 JSRules) confirms charger presence with 60s stabilisation
 3. **Relay turns ON** → IRFP9140N MOSFET switches 12V to the K7 dashcam
 4. **K7 boots up** and broadcasts its WiFi access point
-5. **Raspberry Pi 4** detects the K7 WiFi, connects, and downloads all new footage to NAS
+5. **Raspberry Pi 3** detects the K7 WiFi, connects, and downloads all new footage to NAS
 6. Every file is **SHA-256 verified** (download hash + NAS read-back) before deletion from K7
 7. **Dump complete** → Relay turns OFF → K7 shuts down
 8. **Charger disconnected** → BLE detects Idle state → System re-arms to PARKED
@@ -60,7 +60,7 @@ No manual intervention. Footage is automatically backed up whenever you charge.
                               └───────────┬────────────────┘
                                           │ WiFi 5GHz
                               ┌───────────┴────────────────┐
-                              │  Raspberry Pi 4             │
+                              │  Raspberry Pi 3             │
                               │  ALFA AWUS036ACM (USB3)     │
                               │  innovv-k7-dump.service     │
                               │  victron-ble-monitor.service│
@@ -97,7 +97,7 @@ See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab)
 | 100Ω resistor | 1/4W (optional) | Gate inrush limiter |
 | Blocking diode | 1N4007 (1A/1000V) | **INSTALLED** — Blocks MOSFET back-feed into ignition circuit |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video |
-| Raspberry Pi 4 | Any RAM variant | Runs dump service + BLE monitor |
+| Raspberry Pi 3 | Any RAM variant | Runs dump service + BLE monitor |
 | Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Primary charger detection via BLE |
 | ALFA AWUS036ACM | MT7612U, AC1200, USB 3.0 | 5GHz WiFi to K7 AP |
 | GPS tracker | e.g. Teltonika FMM920 (optional) | Ignition state for state machine |
@@ -290,9 +290,9 @@ HTTP download → .partial temp → SHA-256 during download → fsync
 
 Files are **never** deleted from the K7 unless 100% verified on the NAS.
 
-## Pi WiFi Firmware Note
+## Pi WiFi Note
 
-The Pi 4's BCM43455 WiFi chip **requires minimal firmware** (7.45.241) to connect to the K7's RTL8821CS 5 GHz access point. The standard Cypress firmware causes `ASSOC_REJECT` errors. The install script handles this automatically.
+An **ALFA AWUS036ACM** USB WiFi dongle (MediaTek MT7612U, `mt76x2u` driver) is used on `wlan1` for 5 GHz connectivity to the K7. The onboard BCM43455 (wlan0) had `ASSOC_REJECT` issues with the K7's RTL8821CS access point and is no longer used.
 
 ## Configuration
 

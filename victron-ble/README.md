@@ -1,6 +1,6 @@
 # Victron Blue Smart IP65 12/10 — BLE GATT Monitor
 
-Standalone BLE monitor daemon for the **Victron Blue Smart IP65 12/10** battery charger. Runs on a Raspberry Pi 4, connects via BLE GATT to read charger data, and posts values to openHAB REST API.
+Standalone BLE monitor daemon for the **Victron Blue Smart IP65 12/10** battery charger. Runs on a Raspberry Pi 3, connects via BLE GATT to read charger data, and posts values to openHAB REST API.
 
 ## Hardware
 
@@ -10,7 +10,7 @@ Standalone BLE monitor daemon for the **Victron Blue Smart IP65 12/10** battery 
 | BLE Address | `EB:A8:21:DD:9C:A0` |
 | BLE Name | "Springfield Charger" |
 | Manufacturer ID | `0x02E1` (Victron Energy) |
-| Host | Raspberry Pi 4 (`192.168.1.60`, user `pi`) |
+| Host | Raspberry Pi 3 (`192.168.1.60`, user `pi`) |
 | BLE Adapter | hci0 (`B8:27:EB:79:D9:95`) |
 | openHAB | `192.168.1.10:8080` |
 
@@ -87,7 +87,7 @@ When the charger is disconnected from mains power, its BLE radio shuts off. Afte
 ### Pi Setup
 
 ```bash
-# On Pi 4 (192.168.1.60)
+# On Pi 3 (192.168.1.60)
 mkdir -p /home/pi/victron-ble
 python3 -m venv /home/pi/victron-ble/.venv
 source /home/pi/victron-ble/.venv/bin/activate

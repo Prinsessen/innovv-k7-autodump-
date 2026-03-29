@@ -53,7 +53,7 @@ The K7 is a **dual-channel** system with front+rear cameras:
 | Setting | Value |
 |---------|-------|
 | **Daemon** | hostapd v2.7 (Realtek fork `devel_rtw-17-g894b400ab`) |
-| **Interface** | `wlan0` |
+| **Interface** | `wlan1` |
 | **Config file** | `/etc/wifiap_wpa2.conf` |
 | **Camera IP** | `192.168.1.254` (acts as gateway) |
 | **DHCP server** | `udhcpd` (assigns IPs to connected clients) |
@@ -76,7 +76,7 @@ INOVV app or hidden settings.
 | 2.4 GHz | 802.11n | 150 Mbps | ~30–50 Mbps | 10–15 min |
 | 5 GHz | 802.11ac | 433 Mbps | ~100–200 Mbps | 2–5 min |
 
-The Pi 4's BCM43455 also supports both bands — both sides can do 5 GHz.
+The Pi 3 onboard BCM43455 also supports both bands — both sides can do 5 GHz.
 
 At garage range (1–3 meters), 5 GHz has zero disadvantage (shorter range doesn't
 matter). **If configurable, use 5 GHz for fastest dumps.**
@@ -331,23 +331,23 @@ to that routine needed.
 
 ## System Architecture
 
-Since the OpenHAB VM has no WiFi, a **Raspberry Pi 4** in the garage acts
+Since the OpenHAB VM has no WiFi, a **Raspberry Pi 3** in the garage acts
 as the WiFi bridge and runs the dump script locally.
 
-The Pi 4 has both **Gigabit Ethernet and built-in WiFi**, which is ideal:
+The Pi 3 uses **Gigabit Ethernet and built-in WiFi**, which is ideal:
 - **Ethernet** → plugged into garage network switch → always on home LAN
-- **WiFi (`wlan0`)** → dedicated exclusively for K7 hotspot connection
+- **WiFi (`wlan1`)** → dedicated exclusively for K7 hotspot connection
 
 Both networks are available simultaneously — no WiFi juggling needed.
 
-### Raspberry Pi 4 — OS & Setup
+### Raspberry Pi 3 — OS & Setup
 
 **OS:** Raspberry Pi OS Lite (64-bit) — headless, no desktop (Debian 12 Bookworm).
 
 | Requirement | Status |
 |---|---|
 | Python 3.11+ | ✅ Included |
-| NetworkManager (dual eth0+wlan0) | ✅ Default since Bookworm |
+| NetworkManager (dual eth0+wlan1) | ✅ Default since Bookworm |
 | systemd (dump service) | ✅ Included |
 | FTP client (`ftplib` in Python stdlib) | ✅ Included |
 | wpa_supplicant (K7 WiFi via NetworkManager) | ✅ Included |
@@ -361,7 +361,7 @@ headless appliance that only dumps files.
 - Pre-configure in Imager settings:
   - Hostname: `k7dump`
   - Enable SSH + set your public key
-  - WiFi: **skip** (wlan0 is configured separately for K7)
+  - WiFi: **skip** (wlan1 is configured separately for K7)
   - Locale: `da_DK` / `Europe/Copenhagen`
 
 After first boot, SSH in via eth0 and run `install.sh` from the `pi-software/`
@@ -379,11 +379,11 @@ connection profile for the K7 hotspot.
               └────────┘  └────────┘         └────┬─────┘
                                                    │ Ethernet
                                               ┌────┴─────┐
-                                              │  Pi 4    │
+                                              │  Pi 3    │
                                               │ (garage) │
                                               │192.168.1.x  │
                                               └────┬─────┘
-                                                   │ WiFi (wlan0)
+                                                   │ WiFi (wlan1)
                                                    │ dedicated to K7
                                          ┌────────┴────────┐
                K7 WiFi AP                │  INNOVV K7 DVR  │
@@ -394,19 +394,19 @@ connection profile for the K7 hotspot.
 
 ### Pi Zero W Role
 
-### Pi 4 Role
+### Pi 3 Role
 
 The Pi connects to the **home LAN via Ethernet** (always connected to NAS and
 OpenHAB). Its WiFi is dedicated to the K7:
 
 1. WiFi scans for K7 SSID (every 30s when Shelly Plus Uni relay is ON)
-2. K7 SSID detected → `wlan0` connects to K7 hotspot (192.168.1.x)
+2. K7 SSID detected → `wlan1` connects to K7 hotspot (192.168.1.x)
 3. Downloads new footage via FTP/HTTP (K7 on WiFi, NAS on Ethernet — simultaneous)
 4. Files go directly to NAS mount — no local buffering needed
 5. Disconnects WiFi when done
 6. Reports status to OpenHAB via REST API (over Ethernet — always available)
 
-**Advantage of Pi 4 over Pi Zero:** Ethernet + WiFi means the Pi downloads
+**Advantage of Pi 3 over Pi Zero:** Ethernet + WiFi means the Pi downloads
 from K7 over WiFi and writes directly to NAS over Ethernet at the same time.
 No buffering to local SD card needed. The Gigabit Ethernet is faster than
 the WiFi link to K7, so the K7's WiFi speed is the only bottleneck.
@@ -418,7 +418,7 @@ the WiFi link to K7, so the K7's WiFi speed is the only bottleneck.
 | **Pi → OpenHAB REST API** | Pi reports status via Ethernet (always connected) |
 | **OpenHAB → Shelly binding** | Controls Shelly Plus Uni relay (K7 power on/off) via HTTP |
 | **Traccar binding → OpenHAB** | Bike arrival/departure triggers power sequence |
-| **HTTP/FTP → K7** | Pi downloads footage from K7 over WiFi (wlan0) |
+| **HTTP/FTP → K7** | Pi downloads footage from K7 over WiFi (wlan1) |
 | **NFS/SMB → NAS** | Pi stores footage on Synology NAS over Ethernet (simultaneous) |
 
 No MQTT broker needed — the Pi uses simple HTTP calls to the OpenHAB REST API
@@ -467,20 +467,20 @@ lftp -c "open ftp://192.168.1.254; mirror --newer-than=<last_dump> /DCIM/ /mnt/n
 
 2. K7 stays powered after ignition off (Shelly Plus Uni relay bypasses ignition, Victron maintains battery)
 
-3. Pi 4: wlan0 scanning for K7 WiFi SSID (every 30s)
+3. Pi 3: wlan1 scanning for K7 WiFi SSID (every 30s)
    └─► K7 SSID detected!
-       └─► Connect wlan0 to K7 WiFi
+       └─► Connect wlan1 to K7 WiFi
        └─► REST API: postUpdate K7_Status = "connected"
 
-4. Pi 4: run dump script
+4. Pi 3: run dump script
    └─► HTTP API: heartbeat (cmd=3012)
    └─► HTML directory listing: get file list (recursive)
    └─► Compare with SQLite download database
    └─► HTTP: download new files → verify SHA-256 → write to NAS (via Ethernet)
    └─► REST API: postUpdate K7_Status = "dumping (3/12)"
 
-5. Pi 4: dump complete
-   └─► Disconnect wlan0 from K7 WiFi
+5. Pi 3: dump complete
+   └─► Disconnect wlan1 from K7 WiFi
    └─► REST API: postUpdate K7_Status = "complete"
    └─► REST API: postUpdate K7_LastDump = "2026-03-09T18:30:00"
    └─► REST API: postUpdate K7_FilesDownloaded = 12
@@ -504,7 +504,7 @@ If dump doesn't complete within **30 minutes**:
 Traccar: bike GPS exits home geofence
   └─► OpenHAB: turn OFF Shelly Plus Uni OUT1 (if still on)
   └─► Cancel safety timer
-  └─► Pi: K7 WiFi disappears on wlan0, Ethernet stays up
+  └─► Pi: K7 WiFi disappears on wlan1, Ethernet stays up
 ```
 
 ---
@@ -513,9 +513,9 @@ Traccar: bike GPS exits home geofence
 
 | Item | Purpose | Est. Cost |
 |------|---------|-----------|
-| **Raspberry Pi 4** (spare) | Ethernet + WiFi bridge, dump script | Already have |
-| **Ethernet cable** | Pi 4 to garage switch | ~$5 |
-| **Pi 4 power supply** (5V 3A USB-C) | Power the Pi in garage | ~$10 (or reuse) |
+| **Raspberry Pi 3** (spare) | Ethernet + WiFi bridge, dump script | Already have |
+| **Ethernet cable** | Pi 3 to garage switch | ~$5 |
+| **Pi 3 power supply** (5V 3A USB-C) | Power the Pi in garage | ~$10 (or reuse) |
 | **microSD card** (32GB) | Pi OS (footage goes straight to NAS) | ~$8 |
 | **Shelly Plus Uni** | Smart relay controller, 9–28V DC, pre-wired | ~140 DKK / €19 |
 | **Automotive relay** (SRA-12VDC) | Switches K7 current (10A contacts) | ~10 DKK |
@@ -525,10 +525,10 @@ Traccar: bike GPS exits home geofence
 | **Conformal coat spray** | Weatherproofing for Plus Uni PCB | ~40 DKK |
 | **Heat-shrink / IP65 box** | Physical protection | ~20 DKK |
 | **SAE quick-disconnect** | Physical kill switch for long trips | ~30 DKK |
-| **Pi 4 case** (optional) | Garage mounting | ~$5 |
+| **Pi 3 case** (optional) | Garage mounting | ~$5 |
 | | **Total** | **~350–400 DKK / ~$45-50** |
 
-**Already have:** Raspberry Pi 4, Victron Blue Smart IP65 12V/10A charger
+**Already have:** Raspberry Pi 3, Victron Blue Smart IP65 12V/10A charger
 
 ### Shelly Plus Uni — Specifications
 
@@ -666,12 +666,12 @@ and the 30-minute dump window should be enough to grab everything. Consider
 sending `cmd=2001&par=0` (stop recording) at the start of the dump if this
 becomes an issue.
 
-### 3. wlan0 Default Route Hijack
-When the Pi connects wlan0 to the K7 hotspot (192.168.1.x), NetworkManager may
-add a default route via wlan0 — breaking the Pi's internet/LAN access via eth0.
+### 3. wlan1 Default Route Hijack
+When the Pi connects wlan1 to the K7 hotspot (192.168.1.x), NetworkManager may
+add a default route via wlan1 — breaking the Pi's internet/LAN access via eth0.
 
 **Mitigation:** The `wifi_manager.py` script configures the K7 connection profile
-with `never-default=yes` (no default route via wlan0). Only a `/24` route for
+with `never-default=yes` (no default route via wlan1). Only a `/24` route for
 `192.168.1.0/24` is added. Verify with `ip route` after first connection.
 
 ### 4. FTP Speed vs Safety Timeout
@@ -728,17 +728,17 @@ still growing).
 1. **Discover actual SSID/password** — power on K7, check WiFi networks or INNOVV app
 2. **Order hardware** — Shelly Plus Uni, SRA-12VDC automotive relay, 1N4007 diode, inline fuse, SAE connectors, conformal coat, wire, Ethernet cable
 3. **Wire Shelly Plus Uni + automotive relay** — battery → fuse → SAE → Plus Uni + relay → K7 power wire (bypassing ignition)
-4. **Set up Pi 4** — Raspberry Pi OS Lite (64-bit), Ethernet to garage switch, configure SSH, mount NAS
+4. **Set up Pi 3** — Raspberry Pi OS Lite (64-bit), Ethernet to garage switch, configure SSH, mount NAS
 
 ### Phase 2: Manual Testing
 5. **Power K7 from battery** — ignition off, Victron attached, Shelly Plus Uni OUT1 ON → verify K7 stays alive
-6. **Connect Pi to K7** — manually connect wlan0 to K7 WiFi, verify connectivity to 192.168.1.254
+6. **Connect Pi to K7** — manually connect wlan1 to K7 WiFi, verify connectivity to 192.168.1.254
 7. **Probe the API** — test heartbeat (3012), file listing (3015), firmware version (3016)
 8. **Test FTP** — connect via FTP, browse SD card, download a test file
 9. **Test RTSP** — try `ffplay rtsp://192.168.1.254/live` (optional, for NVR later)
 
 ### Phase 3: Software
-10. **Build Python dump script** — runs on Pi 4, handles WiFi scan/connect/dump/report
+10. **Build Python dump script** — runs on Pi 3, handles WiFi scan/connect/dump/report
 11. **OpenHAB items + rules** — K7 status items, Shelly Plus Uni relay control, timeout safety
 12. **Pi → OpenHAB REST API** — status updates via HTTP over Ethernet
 13. **Download database** — SQLite on Pi tracking which files have been dumped
@@ -755,14 +755,14 @@ still growing).
 
 ## Pi Software
 
-The complete Python software package for the Pi 4 is in [`pi-software/`](pi-software/).
+The complete Python software package for the Pi 3 is in [`pi-software/`](pi-software/).
 
 ### Files
 
 | File | Purpose |
 |------|---------|
 | `innovv_k7_dump.py` | Main service — scan/connect/dump/disconnect loop |
-| `wifi_manager.py` | wlan0 management via wpa_supplicant (band-agnostic) |
+| `wifi_manager.py` | wlan1 management via wpa_supplicant (band-agnostic) |
 | `k7_api.py` | K7 HTTP API + HTML directory listing + download + delete |
 | `openhab_client.py` | REST API client for OpenHAB status updates |
 | `config.json` | All configuration (WiFi, NAS, OpenHAB, safety limits) |
@@ -824,7 +824,7 @@ Number  K7_Battery_Voltage  "Battery [%.1f V]"           <energy>   (gK7) { chan
 
 ## Real-World Findings (2026-03 Deployment)
 
-> **This section documents what we discovered during actual Pi 4 deployment.
+> **This section documents what we discovered during actual Pi 3 deployment.
 > Several assumptions from the firmware analysis above turned out to be wrong.**
 
 ### FTP Does NOT Work
@@ -865,7 +865,7 @@ For best accuracy, periodically sync time via the INNOVV phone app.
 
 ### BCM43455 WiFi Firmware Bug
 
-The Pi 4's Broadcom BCM43455 WiFi chip **cannot associate** with the K7's
+The Pi 3's Broadcom BCM43455 WiFi chip **cannot associate** with the K7's
 RTL8821CS access point using the standard Cypress firmware. It repeatedly
 fails with `ASSOC_REJECT` (status code 1).
 
