@@ -658,6 +658,17 @@ rules.JSRule({
         items.getItem('MC_K7_Shelly_Uptime').postUpdate(data.sys.uptime);
       }
 
+      // --- Last Update (Shelly's own clock — sys.unixtime) ---
+      if (data.sys && typeof data.sys.unixtime === 'number') {
+        var shellyEpoch = data.sys.unixtime;
+        var shellyTime = time.ZonedDateTime.ofInstant(
+          time.Instant.ofEpochSecond(shellyEpoch), time.ZoneId.systemDefault()
+        );
+        items.getItem('MC_K7_Shelly_LastUpdate').postUpdate(
+          shellyTime.format(time.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+        );
+      }
+
       // --- Heartbeat (timestamp of successful poll) ---
       items.getItem('MC_K7_Shelly_Heartbeat').postUpdate(
         time.ZonedDateTime.now().format(time.DateTimeFormatter.ISO_OFFSET_DATE_TIME)

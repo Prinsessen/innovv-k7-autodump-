@@ -97,10 +97,9 @@ class WiFiManager:
                 scan_output = result.stdout
 
         # Still not found — full spectrum scan (2.4 + 5 GHz, slower)
-        # Note: "ap-force" removed — hangs on mt76x2u (USB dongle) driver
         if scan_output is None:
             result = self._run(
-                [_IW, self.interface, "scan"],
+                [_IW, self.interface, "scan", "ap-force"],
                 timeout=25,
             )
             if result.returncode == 0 and self.ssid in result.stdout:
