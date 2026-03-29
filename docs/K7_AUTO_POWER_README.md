@@ -20,7 +20,7 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                            │  │ ->COOLDOWN->DUMP_DONE->PARKED     │ │
                            │  │ LOW_BATTERY (emergency)           │ │
   K7_Dump_Status ─────────>│  └───────────┬───────────────────────┘ │
-  (from Pi 4 REST API)     │              │ sendCommand(ON/OFF)     │
+  (from Pi 3 REST API)     │              │ sendCommand(ON/OFF)     │
                            │              │ HTTP poll (SSID/RSSI)   │
                            └──────────────┼─────────────────────────┘
                                           │
@@ -65,7 +65,7 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                               ┌───────────┴────────────────┐
                               │  IP65 Enclosure (wall)      │
                               │  ┌────────────────────────┐ │
-                              │  │ Pi 4 (192.168.1.60)       │ │
+                              │  │ Pi 3 (192.168.1.60)       │ │
                               │  │ eth0: home LAN         │ │
                               │  │ ALFA AWUS036ACM (USB3) │ │
                               │  │ innovv-k7-dump.service │ │
@@ -94,7 +94,7 @@ The system uses **two independent sensors** for charger detection, with BLE as t
 
 ### PRIMARY: Victron BLE Charger State
 
-A Pi 4 daemon (`victron-ble-monitor`) connects to the Victron Blue Smart IP65 12/10 charger via BLE GATT every 30 seconds, reading the actual charge state (Bulk/Absorption/Float/Storage/Idle/Off). This is 100% accurate — no voltage threshold guessing.
+A Pi 3 daemon (`victron-ble-monitor`) connects to the Victron Blue Smart IP65 12/10 charger via BLE GATT every 30 seconds, reading the actual charge state (Bulk/Absorption/Float/Storage/Idle/Off). This is 100% accurate — no voltage threshold guessing.
 
 - **BLE Online + Charging** (Bulk/Absorption/Float/Recondition) = charger actively charging battery
 - **BLE Online + Connected** (Storage/Idle) = charger has mains power, battery may be connected but fully charged
@@ -160,7 +160,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video | Mounted on motorcycle |
 | Teltonika FMM920 | GPS tracker | Ignition state + battery voltage | Mounted on motorcycle |
 | Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Charges battery, PRIMARY charger detection via BLE | Garage |
-| Pi 4 | Raspberry Pi 4 | K7 dump service + Victron BLE monitor | Garage IP65 enclosure (192.168.1.60) |
+| Pi 3 | Raspberry Pi 3 | K7 dump service + Victron BLE monitor | Garage IP65 enclosure (192.168.1.60) |
 | ALFA AWUS036ACM | MT7612U, AC1200, USB 3.0 | 5GHz WiFi to K7 AP (mt76 in-kernel driver) | Inside IP65 enclosure with Pi |
 | RP-SMA extension cable | RG174 coax, 2m, RP-SMA M→F | Antenna feed through IP65 enclosure | PG7 cable gland pass-through |
 | 5dBi dual-band antenna | RP-SMA, included with ALFA | 5GHz reception from K7 | Ceiling-mounted above motorcycle |
@@ -746,7 +746,7 @@ All scenarios tested live with real hardware:
 
 ### Dump doesn't start
 - Pi dump service is independent — check `systemctl status innovv-k7-dump` on Pi
-- Verify K7 WiFi AP is broadcasting (`iw dev wlan0 scan` on Pi)
+- Verify K7 WiFi AP is broadcasting (`iw dev wlan1 scan` on Pi)
 - The K7 may need 30-60s to fully boot and start WiFi
 
 ### Relay stays ON too long
