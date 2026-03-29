@@ -45,7 +45,7 @@ import time
 from typing import Optional
 
 import aiohttp
-from bleak import BleakClient, BleakError
+from bleak import BleakClient, BleakError, BleakScanner
 
 # ── Configuration ────────────────────────────────────────────────────────────
 CHARGER_ADDR = "EB:A8:21:DD:9C:A0"
@@ -71,6 +71,8 @@ ITEMS = {
     "yield_kwh":   "MC_Charger_Yield",
     "state":       "MC_Charger_State",
     "last_update": "MC_Charger_Last_Update",
+    "ble_rssi":    "MC_Charger_BLE_RSSI",
+    "ble_signal":  "MC_Charger_BLE_Signal",
 }
 
 # Victron register definitions: reg_id -> (name, dtype_expected, scale_fn)
@@ -283,11 +285,56 @@ class VictronBLEMonitor:
         except Exception as e:
             log.warning("CMD %s failed: %s", item, e)
 
+    # ── BLE signal quality ────────────────────────────────────────────────
+    @staticmethod
+    def _rssi_to_quality(dbm: int) -> str:
+        """Convert RSSI dBm to human-readable quality string."""
+        if dbm >= -60:
+            quality = "Excellent"
+        elif dbm >= -70:
+            quality = "Good"
+        elif dbm >= -80:
+            quality = "Fair"
+        elif dbm >= -90:
+            quality = "Weak"
+        else:
+            quality = "Very Weak"
+        return f"{quality} ({dbm} dBm)"
+
+    # ── BLE RSSI scan ────────────────────────────────────────────────────
+    async def _scan_rssi(self) -> Optional[int]:
+        """Quick BLE scan to get RSSI for the charger.
+
+        Returns RSSI in dBm or None if charger not found.
+        Uses return_adv=True to get AdvertisementData which holds RSSI
+        (BLEDevice alone doesn't carry RSSI in bleak 2.x).
+        """
+        try:
+            devices = await BleakScanner.discover(
+                timeout=5.0, return_adv=True
+            )
+            for addr, (dev, adv) in devices.items():
+                if addr.upper() == CHARGER_ADDR.upper():
+                    log.info("BLE RSSI: %d dBm (charger %s)", adv.rssi, addr)
+                    return adv.rssi
+            log.debug("Charger not found in BLE scan")
+        except Exception as e:
+            log.warning("BLE RSSI scan failed: %s", e)
+        return None
+
     # ── Single poll cycle ────────────────────────────────────────────────
     async def _poll_once(self) -> bool:
         """Connect, collect data, parse, return True on success."""
         self._data_buffer = bytearray()
         self._disconnected = False
+
+        # Scan for RSSI before connecting (scan and GATT can't overlap)
+        rssi = await self._scan_rssi()
+        if rssi is not None:
+            await self._post_to_openhab(ITEMS["ble_rssi"], str(rssi))
+            await self._post_to_openhab(
+                ITEMS["ble_signal"], self._rssi_to_quality(rssi)
+            )
 
         client = BleakClient(
             CHARGER_ADDR,

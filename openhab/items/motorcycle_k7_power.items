@@ -56,6 +56,8 @@ DateTime MC_K7_Relay_Since  "Relay ON Since [%1$tF %1$tR]"              <time>  
 //   Online + Bulk/Absorption/Float/Storage = actively charging
 // BLE address: EB:A8:21:DD:9C:A0 (paired+bonded with Pi4)
 Switch   MC_Charger_BLE_Online   "Charger BLE [MAP(k7_onoff.map):%s]"    <bluetooth>     (gMC_K7_Power)  ["Status"]
+Number   MC_Charger_BLE_RSSI     "BLE Signal [%d dBm]"                    <victron-rssi-blue-v1> (gMC_K7_Power) ["Measurement"]
+String   MC_Charger_BLE_Signal   "BLE Signal [%s]"                         <victron-rssi-blue-v1> (gMC_K7_Power) ["Status"]
 String   MC_Charger_Connection   "Charger [%s]"                           <network>       (gMC_K7_Power)  ["Status"]
 Number   MC_Charger_Voltage      "Charger Voltage [%.2f V]"              <energy>        (gMC_K7_Power)  ["Measurement"]
 Number   MC_Charger_Current      "Charger Current [%.2f A]"              <energy>        (gMC_K7_Power)  ["Measurement"]

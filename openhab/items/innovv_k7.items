@@ -1,7 +1,7 @@
 // =============================================================================
 // INNOVV K7 Dashcam — Auto-Dump Service Status
 // =============================================================================
-// Updated by Pi 4 (k7-bridge / 192.168.1.60) via REST API.
+// Updated by Pi 4 (k7-bridge / 10.0.5.60) via REST API.
 // Service: innovv-k7-dump.service
 // Source:  /etc/openhab/innovv-k7/pi-software/
 // =============================================================================
@@ -35,3 +35,4 @@ Switch      K7_Dump_Movie_E                     "Dump Movie_E (Loop Video) [MAP(
 // --- Storage health ---
 Number      K7_NAS_Free_GB                      "NAS Free [%.0f GB]"             <k7-disk-cyan>  (gK7)   ["Measurement"]
 Number      K7_Pi_Disk_Free_MB                  "Pi SD Free [%d MB]"            <k7-disk-cyan>  (gK7)   ["Status"]
+Number      K7_Pi_Temperature                   "Pi Temperature [%.1f °C]"      <k7-temp-red-v1>   (gK7)   ["Measurement"]

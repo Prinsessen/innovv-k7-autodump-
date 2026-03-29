@@ -147,6 +147,10 @@ class OpenHABClient:
         """Update Pi SD card free space in MB."""
         self._update_item(self._item("Pi_Disk_Free_MB"), str(free_mb))
 
+    def update_pi_temperature(self, temp_c: float):
+        """Update Pi CPU/SoC temperature in °C."""
+        self._update_item(self._item("Pi_Temperature"), f"{temp_c:.1f}")
+
     def update_transfer_speed(self, speed_text: str):
         """Update the current transfer speed display.
 

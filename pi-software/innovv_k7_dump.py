@@ -263,6 +263,19 @@ class InnovvK7Dump:
         except Exception as e:
             self.log.warning(f"Could not check Pi disk space: {e}")
 
+    def _report_pi_temperature(self):
+        """Report Pi SoC temperature to OpenHAB."""
+        try:
+            with open("/sys/class/thermal/thermal_zone0/temp") as f:
+                temp_c = int(f.read().strip()) / 1000.0
+            self.openhab.update_pi_temperature(temp_c)
+            self.log.info(f"Pi temperature: {temp_c:.1f}°C")
+            if temp_c >= 80.0:
+                self.log.warning(f"Pi temperature high: {temp_c:.1f}°C!")
+                self.openhab.update_error(f"Pi temp high: {temp_c:.1f}°C")
+        except Exception as e:
+            self.log.warning(f"Could not read Pi temperature: {e}")
+
     def _clean_stale_partials(self):
         """Remove stale .partial files from NAS left by interrupted downloads.
 
@@ -544,13 +557,16 @@ class InnovvK7Dump:
             # Step 0: Report Pi disk space
             self._report_pi_disk_space()
 
-            # Step 0a: Clean up stale .partial files from interrupted downloads
+            # Step 0a: Report Pi temperature
+            self._report_pi_temperature()
+
+            # Step 0b: Clean up stale .partial files from interrupted downloads
             self._clean_stale_partials()
 
-            # Step 0b: Check NAS integrity (detect manually deleted files)
+            # Step 0c: Check NAS integrity (detect manually deleted files)
             self._verify_nas_integrity()
 
-            # Step 0c: Remove unverified files (will be re-downloaded fresh)
+            # Step 0d: Remove unverified files (will be re-downloaded fresh)
             self._remove_unverified_downloads()
 
             # Step 1: Heartbeat
@@ -922,12 +938,20 @@ class InnovvK7Dump:
         self.openhab.update_status("idle")
         self.openhab.update_camera_online(False)
         self.openhab.update_wifi_signal(None)
+        self._report_pi_temperature()
 
         scan_interval = self.config["k7_wifi"]["scan_interval_sec"]
         max_dump_sec = self.config["safety"]["max_dump_duration_min"] * 60
+        temp_report_interval = 300  # Report Pi temperature every 5 minutes
+        last_temp_report = time.time()
 
         while self.running:
             try:
+                # Periodically report Pi temperature (every 5 min)
+                if time.time() - last_temp_report >= temp_report_interval:
+                    self._report_pi_temperature()
+                    last_temp_report = time.time()
+
                 # Scan for K7 WiFi
                 self.log.debug(f"Scanning for SSID: {self.config['k7_wifi']['ssid']}")
 
