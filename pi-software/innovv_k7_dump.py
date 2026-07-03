@@ -60,6 +60,17 @@ class InnovvK7Dump:
         self.db_path = self.config["database"]["path"]
         self._init_database()
 
+        # On-demand radio gate: keep wlan1 down unless the K7 camera is
+        # powered. MC_K7_Relay = ON means the charger is connected and the
+        # camera has power (so its hotspot can exist). While OFF, the ALFA
+        # dongle must not probe channel 36 (co-channel with home AP-3).
+        gate = self.config.get("relay_gate", {})
+        self.relay_gate_enabled = gate.get("enabled", True)
+        self.relay_gate_item = gate.get("item", "MC_K7_Relay")
+        self.relay_gate_on_value = gate.get("on_value", "ON")
+        self.relay_gate_poll_sec = gate.get("poll_interval_sec", 15)
+        self._radio_is_off = False
+
         # Graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -940,6 +951,15 @@ class InnovvK7Dump:
         self.openhab.update_wifi_signal(None)
         self._report_pi_temperature()
 
+        # On-demand radio: start with wlan1 down. It only comes up when the
+        # relay says the camera is powered (see gate below).
+        if self.relay_gate_enabled:
+            self.wifi.radio_off()
+            self._radio_is_off = True
+            self.log.info(
+                f"Radio gating ON — wlan1 stays down until {self.relay_gate_item}=ON"
+            )
+
         scan_interval = self.config["k7_wifi"]["scan_interval_sec"]
         max_dump_sec = self.config["safety"]["max_dump_duration_min"] * 60
         temp_report_interval = 300  # Report Pi temperature every 5 minutes
@@ -951,6 +971,35 @@ class InnovvK7Dump:
                 if time.time() - last_temp_report >= temp_report_interval:
                     self._report_pi_temperature()
                     last_temp_report = time.time()
+
+                # --- On-demand radio gate --------------------------------
+                # Only radiate on channel 36 when the K7 camera is powered.
+                # MC_K7_Relay = ON => charger connected => camera up => its
+                # hotspot can exist. Otherwise keep wlan1 physically down so
+                # the dongle causes zero interference with the home 5 GHz net.
+                # Fail-safe: if openHAB is unreachable, get_item_state()
+                # returns None (!= "ON") => radio stays OFF (never radiate
+                # blindly).
+                if self.relay_gate_enabled:
+                    relay_state = self.openhab.get_item_state(self.relay_gate_item)
+                    camera_powered = (relay_state == self.relay_gate_on_value)
+                    if not camera_powered:
+                        if not self._radio_is_off:
+                            self.log.info(
+                                f"{self.relay_gate_item}={relay_state} — camera off, "
+                                f"radio OFF"
+                            )
+                            self.wifi.radio_off()
+                            self._radio_is_off = True
+                            self.openhab.update_status("idle (radio off)")
+                        self._sleep(self.relay_gate_poll_sec)
+                        continue
+                    if self._radio_is_off:
+                        self.log.info(
+                            f"{self.relay_gate_item}=ON — camera powered, radio ON"
+                        )
+                        self.wifi.radio_on()
+                        self._radio_is_off = False
 
                 # Scan for K7 WiFi
                 self.log.debug(f"Scanning for SSID: {self.config['k7_wifi']['ssid']}")
@@ -1006,6 +1055,11 @@ class InnovvK7Dump:
 
         self.log.info("Service stopped")
         self.openhab.update_status("offline")
+
+        # Leave the radio dark on shutdown so a stopped/crashed service never
+        # leaves the dongle probing channel 36.
+        if self.relay_gate_enabled:
+            self.wifi.radio_off()
 
     def _sleep(self, seconds: int):
         """Interruptible sleep."""

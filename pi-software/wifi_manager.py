@@ -301,6 +301,30 @@ network={{
 
         log.info(f"{self.interface} disconnected")
 
+    def radio_off(self):
+        """Bring the WiFi interface fully DOWN so it emits no RF at all.
+
+        This is the on-demand power-saving state. With the link down the ALFA
+        AWUS036ACM dongle stops probing channel 36 (5180 MHz) entirely and can
+        no longer cause the co-channel 5 GHz dead-spot near the home AP.
+        Called whenever the K7 camera is powered off (MC_K7_Relay = OFF).
+        """
+        # Make sure nothing keeps the radio busy scanning
+        self._run([_KILLALL, "-q", "wpa_supplicant"])
+        self._run([_IP, "addr", "flush", "dev", self.interface])
+        self._run([_IP, "link", "set", self.interface, "down"])
+        log.info(f"{self.interface} radio OFF (link down — no RF on ch36)")
+
+    def radio_on(self):
+        """Bring the WiFi interface UP so it can scan for the K7 hotspot.
+
+        Called when MC_K7_Relay = ON (camera powered). Scanning/probing only
+        happens while the camera can actually present its hotspot.
+        """
+        self._run([_IP, "link", "set", self.interface, "up"])
+        time.sleep(0.5)
+        log.info(f"{self.interface} radio ON (link up — ready to scan)")
+
     def is_connected(self) -> bool:
         """Check if currently connected to K7 WiFi."""
         status = self._get_wpa_status()

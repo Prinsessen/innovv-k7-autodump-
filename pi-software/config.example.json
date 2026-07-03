@@ -22,6 +22,12 @@
     "openhab": {
         "url": "http://192.168.1.10:8080"
     },
+    "relay_gate": {
+        "enabled": true,
+        "item": "MC_K7_Relay",
+        "on_value": "ON",
+        "poll_interval_sec": 15
+    },
     "safety": {
         "max_dump_duration_min": 30,
         "max_total_download_gb": 50,
