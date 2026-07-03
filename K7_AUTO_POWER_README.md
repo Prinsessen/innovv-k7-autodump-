@@ -484,10 +484,10 @@ profile cannot correct both ends accurately.
 |-----------|--------------|---------|
 | `CHARGER_ON_V` (JS rule) | **13.0 V** | Charger detection — voltage must rise above this to start CHARGING |
 | `CHARGER_OFF_V` (JS rule) | **12.7 V** | Charger removal — voltage must drop below this to confirm charger disconnected |
-| `chargerOnVoltage` (Shelly failsafe) | **13.0 V** | Same ON threshold on-device |
-| `chargerOffVoltage` (Shelly failsafe) | **12.7 V** | Same OFF threshold on-device |
+| `chargerOnVoltage` (Shelly failsafe) | **14.0 V** | Higher than JS rule — Bulk/Absorption only (no BLE cross-check on-device) |
+| `chargerOffVoltage` (Shelly failsafe) | **13.0 V** | Confirm charger removed (1.0 V hysteresis) |
 | `LOW_BATT_V` (JS rule) | **12.0 V** | Emergency low battery cutoff |
-| `lowBattVoltage` (Shelly failsafe) | **11.5 V** | Emergency cutoff (on-device) |
+| `lowBattVoltage` (Shelly failsafe) | **12.0 V** | Emergency cutoff (on-device) |
 
 > **Note:** Voltage thresholds are FALLBACK only. When BLE is online, charger detection
 > uses BLE charge state as the primary authority. Voltage-only detection is suppressed
@@ -664,12 +664,13 @@ The local failsafe (`innovv-k7/shelly-failsafe-script.js`) runs on the Shelly's 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
 | Check interval | 30s | ADC polling frequency |
-| Charger ON threshold | 13.0V (raw) | Detect charger connecting (matches JS rule) |
-| Charger OFF threshold | 12.7V (raw) | Confirm charger removed |
+| Charger ON threshold | 14.0V (raw) | Detect charger connecting — Bulk/Absorption only (higher than JS rule's 13.0V; no BLE cross-check on-device) |
+| Charger OFF threshold | 13.0V (raw) | Confirm charger removed (1.0V hysteresis) |
 | Stabilisation | 3 checks (90s) | Confirm charger is stable |
+| Cooldown after OFF | 2 h | Suppress charger re-detection after relay OFF (avoids fighting openHAB during same charge session) |
 | Max ON time (auto) | 25 min | Shorter than openHAB's 30 min — so openHAB timer takes priority |
 | Max ON time (manual) | 60 min | External relay toggle (Shelly app/cloud/physical) |
-| Low battery cutoff | 11.5V | Emergency protection — applies in ALL modes |
+| Low battery cutoff | 12.0V | Emergency protection — applies in ALL modes |
 | Voltmeter ID | 100 | Peripheral added via `Uni.AddPeripheral` |
 
 The failsafe has a **shorter auto timeout** (25 min vs 30 min) so openHAB's safety timer takes priority if both are running.
@@ -680,8 +681,8 @@ The failsafe detects external relay toggles (Shelly app, cloud, API, physical bu
 
 - Sets `isManualOn = true`
 - Starts 60-minute safety timer (generous for browsing K7 footage via WiFi)
-- **Skips charger-removal voltage shutoff** (no charger present when riding/stopped away from home — battery ~12.5V would trigger the 12.7V threshold within 30s)
-- Low battery cutoff (< 11.5V) still applies regardless
+- **Skips charger-removal voltage shutoff** (no charger present when riding/stopped away from home — battery ~12.5V would trigger the 13.0V threshold within 30s)
+- Low battery cutoff (< 12.0V) still applies regardless
 
 This covers the edge case where the user toggles the relay via the Shelly app through their phone hotspot (STA1) when openHAB is unreachable — e.g., stopped on a ride wanting to browse footage. Without this, the relay would stay ON indefinitely since openHAB Rule 7 (Manual Override) never fires.
 
