@@ -53,36 +53,60 @@ function setState(newState, reason) {
 }
 
 // Direct HTTP relay control — bypasses broken Shelly binding (5.1.3 handleCommand never fires)
-function relayOn(reason) {
-  try {
-    var http = actions.HTTP;
-    var url = 'http://' + SHELLY_IP + '/rpc/Switch.Set?id=0&on=true';
-    var resp = http.sendHttpGetRequest(url, 5000);
-    if (resp !== null) {
-      items.getItem('MC_K7_Relay').postUpdate('ON');
-      console.info(LOG + ': Relay ON [HTTP direct] - ' + reason);
-    } else {
-      console.error(LOG + ': Relay ON FAILED - no HTTP response from Shelly');
+//
+// Reliability: a single HTTP call to the Shelly can time out on a momentary
+// WiFi glitch (observed 2026-07-03: "Relay ON FAILED - no HTTP response"),
+// which left the state machine stuck in TRANSFERRING with the relay actually
+// OFF — so the camera never powered and the Pi (correctly) kept wlan1 down.
+// shellySet() retries up to RELAY_SET_ATTEMPTS times and VERIFIES the result
+// via Switch.GetStatus, so we only report success when the relay truly latched.
+var RELAY_SET_ATTEMPTS = 3;
+
+function shellySet(on, reason) {
+  var http = actions.HTTP;
+  var setUrl = 'http://' + SHELLY_IP + '/rpc/Switch.Set?id=0&on=' + (on ? 'true' : 'false');
+  var statusUrl = 'http://' + SHELLY_IP + '/rpc/Switch.GetStatus?id=0';
+  var want = '"output":' + (on ? 'true' : 'false');
+  var label = on ? 'ON' : 'OFF';
+  for (var i = 1; i <= RELAY_SET_ATTEMPTS; i++) {
+    try {
+      var resp = http.sendHttpGetRequest(setUrl, 5000);
+      if (resp !== null) {
+        // Confirm the Shelly actually adopted the requested output state.
+        var st = http.sendHttpGetRequest(statusUrl, 4000);
+        if (st !== null && ('' + st).indexOf(want) >= 0) {
+          console.info(LOG + ': Relay ' + label + ' confirmed [try ' + i + '/' + RELAY_SET_ATTEMPTS + '] - ' + reason);
+          return true;
+        }
+        console.warn(LOG + ': Relay ' + label + ' sent but not confirmed (try ' + i + '/' + RELAY_SET_ATTEMPTS + ')');
+      } else {
+        console.warn(LOG + ': Relay ' + label + ' no HTTP response (try ' + i + '/' + RELAY_SET_ATTEMPTS + ')');
+      }
+    } catch (e) {
+      console.warn(LOG + ': Relay ' + label + ' HTTP error (try ' + i + '/' + RELAY_SET_ATTEMPTS + '): ' + e.message);
     }
-  } catch (e) {
-    console.error(LOG + ': Relay ON error: ' + e.message);
+    // Failed attempts that time out already space themselves ~5s apart.
   }
+  console.error(LOG + ': Relay ' + label + ' FAILED after ' + RELAY_SET_ATTEMPTS + ' attempts - ' + reason);
+  return false;
 }
 
-function relayOff(reason) {
-  try {
-    var http = actions.HTTP;
-    var url = 'http://' + SHELLY_IP + '/rpc/Switch.Set?id=0&on=false';
-    var resp = http.sendHttpGetRequest(url, 5000);
-    if (resp !== null) {
-      items.getItem('MC_K7_Relay').postUpdate('OFF');
-      console.info(LOG + ': Relay OFF [HTTP direct] - ' + reason);
-    } else {
-      console.error(LOG + ': Relay OFF FAILED - no HTTP response from Shelly');
-    }
-  } catch (e) {
-    console.error(LOG + ': Relay OFF error: ' + e.message);
+// Returns true only when the Shelly confirms the relay is ON.
+function relayOn(reason) {
+  if (shellySet(true, reason)) {
+    items.getItem('MC_K7_Relay').postUpdate('ON');
+    return true;
   }
+  return false;
+}
+
+// Returns true only when the Shelly confirms the relay is OFF.
+function relayOff(reason) {
+  if (shellySet(false, reason)) {
+    items.getItem('MC_K7_Relay').postUpdate('OFF');
+    return true;
+  }
+  return false;
 }
 
 function cancelTimer(timerName) {
@@ -275,8 +299,14 @@ function startChargerSequence(voltage, source) {
         }
 
         console.info(LOG + ': Stabilisation complete [' + method + '] [' + getBLEInfo() + '] V=' + recheck.toFixed(1) + 'V - relay ON');
+        // Set state BEFORE relayOn so Rule 6 (relay-ON tracker) sees TRANSFERRING
+        // and does not counter-punch the ON (CHARGING is in the counter-punch list).
         setState(STATES.TRANSFERRING, 'Charger confirmed: ' + method);
-        relayOn('Charger confirmed: ' + method);
+        if (!relayOn('Charger confirmed: ' + method)) {
+          console.error(LOG + ': Relay ON failed after retries — Shelly unreachable; back to PARKED');
+          rearmToParked('Relay ON failed (Shelly unreachable)');
+          return;
+        }
 
         cancelTimer('maxOnTimer');
         var maxOnTimer = actions.ScriptExecution.createTimer(
@@ -573,7 +603,11 @@ rules.JSRule({
         console.info(LOG + ': Manual relay ON - starting dump from ' + currentState);
         // Re-send ON: Rule 6 may have already counter-punched OFF before we ran.
         // Now that state is TRANSFERRING, Rule 6 won't counter-punch again.
-        relayOn('Manual re-send after state set');
+        if (!relayOn('Manual re-send after state set')) {
+          console.error(LOG + ': Manual relay ON failed after retries — reverting to ' + currentState);
+          setState(currentState, 'Relay ON failed (Shelly unreachable)');
+          return;
+        }
 
         // Shorter timeout when BLE/Pi4 unavailable — dump can't complete without it
         var bleAvailable = isBLEOnline();

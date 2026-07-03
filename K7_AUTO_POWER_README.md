@@ -749,6 +749,30 @@ All scenarios tested live with real hardware:
 - Verify K7 WiFi AP is broadcasting (`iw dev wlan1 scan` on Pi)
 - The K7 may need 30-60s to fully boot and start WiFi
 
+### State stuck in TRANSFERRING but nothing happens (relay actually OFF)
+**Symptom:** `MC_K7_Power_State = TRANSFERRING` but `MC_K7_Relay = OFF` and the
+Pi log shows `idle (radio off)` — the dump never starts.
+
+**Cause:** A single HTTP call to the Shelly timed out on a momentary WiFi
+glitch. The old `relayOn()` sent exactly one `Switch.Set` and did **not**
+retry, so the state machine set TRANSFERRING while the relay stayed physically
+OFF. Because `MC_K7_Relay=OFF`, the Pi's on-demand radio gate (correctly) kept
+`wlan1` down → no dump. Log signature: `Relay ON FAILED - no HTTP response from Shelly`.
+
+**Fix (v5):** `shellySet()` now retries up to 3 times and **verifies** the
+result via `Switch.GetStatus`. `relayOn()`/`relayOff()` return a boolean; if the
+relay can't be confirmed after retries, the state machine reverts (charger path
+→ PARKED, manual path → previous state) instead of hanging in TRANSFERRING.
+
+**Manual recovery (if on an older version):**
+```bash
+# Confirm Shelly is reachable now
+curl -s 'http://<SHELLY_IP>/rpc/Switch.GetStatus?id=0'
+# Turn relay ON directly, then sync the openHAB item so the Pi gate lifts wlan1
+curl -s 'http://<SHELLY_IP>/rpc/Switch.Set?id=0&on=true'
+curl -s -X POST -H 'Content-Type: text/plain' -d 'ON' http://<OPENHAB_IP>:8080/rest/items/MC_K7_Relay
+```
+
 ### Relay stays ON too long
 - Safety timeout (30 min) will force OFF
 - Check `K7_Dump_Status` — if stuck on "dumping", Pi may have lost K7 WiFi
@@ -781,6 +805,13 @@ for i in items:
 ```
 
 ## Changelog
+
+### v5 — 2026-07-03: Relay Command Retry + Verification
+- **`shellySet()` helper**: relay ON/OFF now retries up to 3 times and confirms the result via `Switch.GetStatus` before reporting success (previously a single un-retried `Switch.Set`)
+- **`relayOn()`/`relayOff()` return boolean**: callers act on real success/failure
+- **No more stuck TRANSFERRING**: if the Shelly can't be confirmed after retries, the charger path re-arms to PARKED and the manual path reverts to the previous state (was: state set to TRANSFERRING while relay stayed physically OFF on a momentary Shelly HTTP timeout)
+- **Interaction with Pi radio gate**: a failed relay-ON no longer leaves `MC_K7_Relay=OFF` while state claims TRANSFERRING — which had (correctly) kept the Pi's `wlan1` down, so the dump never started
+- **State order preserved**: `setState(TRANSFERRING)` still precedes `relayOn()` in the charger path so Rule 6 does not counter-punch the ON (CHARGING is in the counter-punch list)
 
 ### v4 — 2026-03-15: Manual Mode Safety + Diode Debounce Reduction
 - **Shelly failsafe manual mode**: `Shelly.addStatusHandler()` detects external relay toggles from any source (app, cloud, API)
