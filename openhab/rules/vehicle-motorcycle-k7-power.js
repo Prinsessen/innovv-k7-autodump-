@@ -19,6 +19,8 @@
 const { rules, triggers, items, actions, time } = require('openhab');
 
 const LOG = 'k7_power';
+const SHELLY_IP = '192.168.1.62';  // Shelly Plus Uni IP address
+const ADC_OFFSET = 0.27;        // ADC calibration offset (Fluke 175 ref 13.13V, Shelly raw 12.86V)
 // Voltage thresholds — FALLBACK only (used when BLE is unavailable)
 const CHARGER_ON_V  = 13.0;  // Voltage to DETECT charger (fallback)
 const CHARGER_OFF_V = 12.7;  // Voltage to CONFIRM charger removed (fallback)
@@ -27,6 +29,7 @@ const CHARGER_OFF_V = 12.7;  // Voltage to CONFIRM charger removed (fallback)
 const LOW_BATT_V  = 12.0;
 const STAB_SEC    = 60;
 const MAX_ON_MIN  = 30;
+const NO_BLE_MAX_ON_MIN = 5;  // Shorter relay timeout when BLE/Pi4 unavailable (dump can't complete)
 const COOLDOWN_S  = 30;
 const IGN_DEBOUNCE_S = 5;
 const BLE_PLAUSIBLE_DELTA = 2.0;  // Max V difference between BLE charger and Shelly battery
@@ -49,14 +52,61 @@ function setState(newState, reason) {
   console.info(LOG + ': State -> ' + newState + (reason ? ' (' + reason + ')' : ''));
 }
 
-function relayOn(reason) {
-  items.getItem('MC_K7_Relay').sendCommand('ON');
-  console.info(LOG + ': Relay ON - ' + reason);
+// Direct HTTP relay control — bypasses broken Shelly binding (5.1.3 handleCommand never fires)
+//
+// Reliability: a single HTTP call to the Shelly can time out on a momentary
+// WiFi glitch (observed 2026-07-03: "Relay ON FAILED - no HTTP response"),
+// which left the state machine stuck in TRANSFERRING with the relay actually
+// OFF — so the camera never powered and the Pi (correctly) kept wlan1 down.
+// shellySet() retries up to RELAY_SET_ATTEMPTS times and VERIFIES the result
+// via Switch.GetStatus, so we only report success when the relay truly latched.
+var RELAY_SET_ATTEMPTS = 3;
+
+function shellySet(on, reason) {
+  var http = actions.HTTP;
+  var setUrl = 'http://' + SHELLY_IP + '/rpc/Switch.Set?id=0&on=' + (on ? 'true' : 'false');
+  var statusUrl = 'http://' + SHELLY_IP + '/rpc/Switch.GetStatus?id=0';
+  var want = '"output":' + (on ? 'true' : 'false');
+  var label = on ? 'ON' : 'OFF';
+  for (var i = 1; i <= RELAY_SET_ATTEMPTS; i++) {
+    try {
+      var resp = http.sendHttpGetRequest(setUrl, 5000);
+      if (resp !== null) {
+        // Confirm the Shelly actually adopted the requested output state.
+        var st = http.sendHttpGetRequest(statusUrl, 4000);
+        if (st !== null && ('' + st).indexOf(want) >= 0) {
+          console.info(LOG + ': Relay ' + label + ' confirmed [try ' + i + '/' + RELAY_SET_ATTEMPTS + '] - ' + reason);
+          return true;
+        }
+        console.warn(LOG + ': Relay ' + label + ' sent but not confirmed (try ' + i + '/' + RELAY_SET_ATTEMPTS + ')');
+      } else {
+        console.warn(LOG + ': Relay ' + label + ' no HTTP response (try ' + i + '/' + RELAY_SET_ATTEMPTS + ')');
+      }
+    } catch (e) {
+      console.warn(LOG + ': Relay ' + label + ' HTTP error (try ' + i + '/' + RELAY_SET_ATTEMPTS + '): ' + e.message);
+    }
+    // Failed attempts that time out already space themselves ~5s apart.
+  }
+  console.error(LOG + ': Relay ' + label + ' FAILED after ' + RELAY_SET_ATTEMPTS + ' attempts - ' + reason);
+  return false;
 }
 
+// Returns true only when the Shelly confirms the relay is ON.
+function relayOn(reason) {
+  if (shellySet(true, reason)) {
+    items.getItem('MC_K7_Relay').postUpdate('ON');
+    return true;
+  }
+  return false;
+}
+
+// Returns true only when the Shelly confirms the relay is OFF.
 function relayOff(reason) {
-  items.getItem('MC_K7_Relay').sendCommand('OFF');
-  console.info(LOG + ': Relay OFF - ' + reason);
+  if (shellySet(false, reason)) {
+    items.getItem('MC_K7_Relay').postUpdate('OFF');
+    return true;
+  }
+  return false;
 }
 
 function cancelTimer(timerName) {
@@ -190,6 +240,14 @@ function startChargerSequence(voltage, source) {
   var bleConnected = isBLEConnected();
   if (!bleCharging && !bleConnected && voltage <= CHARGER_ON_V) return;
 
+  // BLE/Pi4 connectivity gate: without Pi4, K7_Dump_Status never updates
+  // so relay would stay ON until MAX_ON_MIN safety timeout with no benefit.
+  // Block voltage-only triggers; Rule 8 (BLE Online) will start when Pi4 is back.
+  if (!bleCharging && !bleConnected && !isBLEOnline()) {
+    console.info(LOG + ': Voltage suggests charger (V=' + voltage.toFixed(1) + ') but BLE/Pi4 offline — waiting for connectivity');
+    return;
+  }
+
   // Grace period: after re-arm from charger-active state, battery voltage
   // lingers above CHARGER_ON_V for minutes. Suppress voltage-only detection
   // for 5 min. BLE charging/connected confirmation overrides immediately.
@@ -230,9 +288,25 @@ function startChargerSequence(voltage, source) {
 
       if (confirmed) {
         var method = (bleChg || bleCon) ? 'BLE ' + items.getItem('MC_Charger_State').state : 'Voltage ' + recheck.toFixed(1) + 'V (no BLE)';
+
+        // SAFETY: If BLE went offline during stabilisation, don't turn relay ON.
+        // Without Pi4/BLE, dump completion can't be tracked → relay would hang
+        // ON until MAX_ON_MIN timeout. Back to PARKED; Rule 8 will retry when BLE returns.
+        if (!bleOnline) {
+          console.warn(LOG + ': Stabilisation: voltage OK (' + recheck.toFixed(1) + 'V) but BLE/Pi4 offline — NOT turning relay ON');
+          rearmToParked('Voltage confirms charger but BLE offline — waiting for Pi4');
+          return;
+        }
+
         console.info(LOG + ': Stabilisation complete [' + method + '] [' + getBLEInfo() + '] V=' + recheck.toFixed(1) + 'V - relay ON');
+        // Set state BEFORE relayOn so Rule 6 (relay-ON tracker) sees TRANSFERRING
+        // and does not counter-punch the ON (CHARGING is in the counter-punch list).
         setState(STATES.TRANSFERRING, 'Charger confirmed: ' + method);
-        relayOn('Charger confirmed: ' + method);
+        if (!relayOn('Charger confirmed: ' + method)) {
+          console.error(LOG + ': Relay ON failed after retries — Shelly unreachable; back to PARKED');
+          rearmToParked('Relay ON failed (Shelly unreachable)');
+          return;
+        }
 
         cancelTimer('maxOnTimer');
         var maxOnTimer = actions.ScriptExecution.createTimer(
@@ -510,6 +584,11 @@ rules.JSRule({
 // Allows manual relay ON (e.g. from sitemap) to trigger a dump from DUMP_DONE
 // or PARKED state. Useful when charger is still connected and you want to
 // force another dump without removing/reconnecting the charger.
+//
+// Race condition fix: Rule 6 (state tracker) fires on the same ON event and
+// counter-punches OFF before this rule runs. We set state to TRANSFERRING
+// FIRST, then re-send ON. Since state is now TRANSFERRING, Rule 6 will NOT
+// counter-punch the re-sent ON (TRANSFERRING is not in counter-punch list).
 // =============================================================================
 rules.JSRule({
   name: 'K7 Power - Manual Relay Override',
@@ -519,14 +598,29 @@ rules.JSRule({
     try {
       var currentState = getState();
       if (currentState === STATES.DUMP_DONE || currentState === STATES.PARKED) {
-        console.info(LOG + ': Manual relay ON - starting dump from ' + currentState);
+        // Set state BEFORE re-sending ON — prevents Rule 6 counter-punch race
         setState(STATES.TRANSFERRING, 'Manual relay ON');
+        console.info(LOG + ': Manual relay ON - starting dump from ' + currentState);
+        // Re-send ON: Rule 6 may have already counter-punched OFF before we ran.
+        // Now that state is TRANSFERRING, Rule 6 won't counter-punch again.
+        if (!relayOn('Manual re-send after state set')) {
+          console.error(LOG + ': Manual relay ON failed after retries — reverting to ' + currentState);
+          setState(currentState, 'Relay ON failed (Shelly unreachable)');
+          return;
+        }
+
+        // Shorter timeout when BLE/Pi4 unavailable — dump can't complete without it
+        var bleAvailable = isBLEOnline();
+        var timeout = bleAvailable ? MAX_ON_MIN : NO_BLE_MAX_ON_MIN;
+        if (!bleAvailable) {
+          console.warn(LOG + ': BLE/Pi4 offline — using ' + NO_BLE_MAX_ON_MIN + 'min timeout (dump tracking unavailable)');
+        }
         cancelTimer('maxOnTimer');
         var maxOnTimer = actions.ScriptExecution.createTimer(
-          time.ZonedDateTime.now().plusMinutes(MAX_ON_MIN),
+          time.ZonedDateTime.now().plusMinutes(timeout),
           function () {
-            console.warn(LOG + ': SAFETY TIMEOUT - relay ON for ' + MAX_ON_MIN + 'min - forcing OFF');
-            relayOff('Safety timeout ' + MAX_ON_MIN + 'min');
+            console.warn(LOG + ': SAFETY TIMEOUT - relay ON for ' + timeout + 'min - forcing OFF');
+            relayOff('Safety timeout ' + timeout + 'min');
             setState(STATES.DUMP_DONE, 'Safety timeout');
           }
         );
@@ -539,32 +633,83 @@ rules.JSRule({
 });
 
 // =============================================================================
-// Rule 5: Shelly WiFi Status Poller (SSID + RSSI dBm)
-// Polls Shelly API every 60s for WiFi details not exposed by binding channels.
+// Rule 5: Shelly Full Status Poller (replaces binding — all channels via HTTP)
+// Polls Shelly.GetStatus every 30s for: voltage (ADC), relay state, WiFi,
+// uptime, heartbeat, SSID, RSSI. This replaces all Shelly binding channels.
+//
+// MIGRATION NOTE (2026-03-26): Shelly binding 5.1.3 has a bug where
+// handleCommand() never fires for shellyplusuni. All relay control and
+// status monitoring is now done via direct HTTP to the Shelly RPC API.
 // =============================================================================
 rules.JSRule({
-  name: 'K7 Power - Shelly WiFi Poll',
-  description: 'Poll Shelly Plus Uni for SSID and RSSI dBm',
-  triggers: [triggers.GenericCronTrigger('0 * * * * ?')],
+  name: 'K7 Power - Shelly Status Poll',
+  description: 'Poll Shelly Plus Uni for all status (replaces broken binding)',
+  triggers: [triggers.GenericCronTrigger('*/30 * * * * ?')],
   execute: function () {
     try {
       var http = actions.HTTP;
-      var json = http.sendHttpGetRequest('http://192.168.1.62/rpc/Wifi.GetStatus', 5000);
+      var json = http.sendHttpGetRequest('http://' + SHELLY_IP + '/rpc/Shelly.GetStatus', 5000);
       if (json === null) {
-        console.debug(LOG + ': Shelly WiFi poll - no response (device offline?)');
+        console.debug(LOG + ': Shelly poll - no response (device offline?)');
         return;
       }
       var data = JSON.parse(json);
-      var ssid = data.ssid || '';
-      var rssi = data.rssi;
-      if (ssid) {
-        items.getItem('MC_K7_Shelly_SSID').postUpdate(ssid);
+
+      // --- Voltage (ADC with calibration offset) ---
+      if (data['voltmeter:100'] && typeof data['voltmeter:100'].voltage === 'number') {
+        var rawV = data['voltmeter:100'].voltage;
+        var calibV = rawV + ADC_OFFSET;
+        items.getItem('MC_K7_Shelly_Voltage').postUpdate(calibV.toFixed(2));
       }
-      if (typeof rssi === 'number') {
-        items.getItem('MC_K7_Shelly_RSSI').postUpdate(rssi);
+
+      // --- Relay state sync (switch:0 = K7 MOSFET relay) ---
+      if (data['switch:0']) {
+        var relayOn = data['switch:0'].output;
+        var relayItem = items.getItem('MC_K7_Relay');
+        var expectedState = relayOn ? 'ON' : 'OFF';
+        if (relayItem.state !== expectedState) {
+          console.info(LOG + ': Shelly relay sync: device=' + expectedState + ' OH=' + relayItem.state + ' — correcting');
+          relayItem.postUpdate(expectedState);
+        }
       }
+
+      // --- WiFi (SSID + RSSI) ---
+      if (data.wifi) {
+        if (data.wifi.ssid) {
+          items.getItem('MC_K7_Shelly_SSID').postUpdate(data.wifi.ssid);
+        }
+        if (typeof data.wifi.rssi === 'number') {
+          items.getItem('MC_K7_Shelly_RSSI').postUpdate(data.wifi.rssi);
+          // Map RSSI to signal strength 0-4
+          var rssi = data.wifi.rssi;
+          var signal = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -72 ? 2 : rssi >= -80 ? 1 : 0;
+          items.getItem('MC_K7_Shelly_WiFi_Signal').postUpdate(signal);
+        }
+      }
+
+      // --- Uptime ---
+      if (data.sys && typeof data.sys.uptime === 'number') {
+        items.getItem('MC_K7_Shelly_Uptime').postUpdate(data.sys.uptime);
+      }
+
+      // --- Last Update (Shelly's own clock — sys.unixtime) ---
+      if (data.sys && typeof data.sys.unixtime === 'number') {
+        var shellyEpoch = data.sys.unixtime;
+        var shellyTime = time.ZonedDateTime.ofInstant(
+          time.Instant.ofEpochSecond(shellyEpoch), time.ZoneId.systemDefault()
+        );
+        items.getItem('MC_K7_Shelly_LastUpdate').postUpdate(
+          shellyTime.format(time.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+        );
+      }
+
+      // --- Heartbeat (timestamp of successful poll) ---
+      items.getItem('MC_K7_Shelly_Heartbeat').postUpdate(
+        time.ZonedDateTime.now().format(time.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+      );
+
     } catch (e) {
-      console.debug(LOG + ': Shelly WiFi poll error: ' + e.message);
+      console.debug(LOG + ': Shelly poll error: ' + e.message);
     }
   }
 });
@@ -589,7 +734,7 @@ rules.JSRule({
       var currentState = getState();
       if (currentState === STATES.DUMP_DONE || currentState === STATES.COOLDOWN || currentState === STATES.PARKED || currentState === STATES.CHARGING || currentState === STATES.LOW_BATTERY) {
         console.warn(LOG + ': Relay ON detected in ' + currentState + ' - unexpected, counter-punching OFF');
-        items.getItem('MC_K7_Relay').sendCommand('OFF');
+        relayOff('Counter-punch: unexpected ON in ' + currentState);
         return;  // Don't update Relay_Since for the brief blip
       }
       items.getItem('MC_K7_Relay_Since').postUpdate(
@@ -764,7 +909,7 @@ rules.JSRule({
       var mustBeOff = [STATES.PARKED, STATES.DUMP_DONE, STATES.COOLDOWN, STATES.LOW_BATTERY];
       if (relayState === 'ON' && mustBeOff.indexOf(currentState) >= 0) {
         console.warn(LOG + ': WATCHDOG: Relay is ON but state is ' + currentState + ' \u2014 forcing OFF');
-        items.getItem('MC_K7_Relay').sendCommand('OFF');
+        relayOff('WATCHDOG: relay ON in ' + currentState);
         items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: relay ON in ' + currentState + ' \u2014 forced OFF');
       }
     } catch (e) {
