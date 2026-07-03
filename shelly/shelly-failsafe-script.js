@@ -7,7 +7,7 @@
 //
 // Provides basic K7 power control when openHAB is unavailable.
 // This is a FAILSAFE only. The primary state machine is in openHAB:
-//   automation/js/vehicle-motorcycle-k7-power.js (5 JSRules)
+//   automation/js/vehicle-motorcycle-k7-power.js (11 JSRules)
 //
 // Hardware:
 //   Shelly Relay1 -> 100 ohm -> IRFP9140N gate (P-channel MOSFET)
@@ -17,19 +17,25 @@
 //
 // Logic:
 //   1. Every 30s: read Voltmeter:100 voltage
-//   2. If voltage > 13.0V for 90s continuously -> charger detected -> relay ON
-//      Charger removal detected when voltage < 12.7V (hysteresis prevents bounce)
+//   2. If voltage > 14.0V for 90s continuously -> charger detected -> relay ON
+//      Charger removal detected when voltage < 13.0V (hysteresis prevents bounce)
+//      14.0V threshold = Bulk/Absorption only (ignores Float 13.8V / Storage 13.2V)
+//      This is HIGHER than openHAB's 13.0V because the Shelly has no BLE cross-
+//      validation or state machine awareness. The higher threshold prevents false
+//      triggers during Storage/Float voltage where openHAB is in DUMP_DONE state.
 //   3. Relay ON drives MOSFET gate to GND -> MOSFET ON -> K7 powered
 //   4. Auto mode: relay stays ON for max 25 minutes (dump window)
-//   5. After 25 min or voltage drops below 12.7V -> relay OFF
-//   6. If voltage < 11.5V -> relay forced OFF immediately (protect battery)
+//   5. After 25 min or voltage drops below 13.0V -> relay OFF
+//   6. If voltage < 12.0V -> relay forced OFF immediately (protect battery)
 //   7. Relay OFF -> 10K pull-up holds gate high -> MOSFET OFF -> K7 off
+//   8. After relay OFF: 2-hour cooldown prevents re-triggering during same
+//      charging session (avoids fighting with openHAB counter-punch)
 //
 // Manual Mode (external relay toggle from Shelly app/cloud/API):
 //   - Detected via Shelly.addStatusHandler() on switch:0 output change
 //   - Relay stays ON for max 60 minutes (browse footage on K7 app)
 //   - Voltage-based charger removal does NOT shut off (no charger present)
-//   - Low battery cutoff (< 11.5V) still applies as emergency protection
+//   - Low battery cutoff (< 12.0V) still applies as emergency protection
 //   - If user forgets to turn off, 60-min timeout protects battery
 //
 // Upload: Via Shelly RPC (Script.PutCode). All non-ASCII characters MUST
@@ -41,14 +47,17 @@
 
 // --- Configuration ---
 let CONFIG = {
-  chargerOnVoltage: 13.0,   // V — detect charger connecting (Bulk/Absorption)
-  chargerOffVoltage: 12.7,  // V — confirm charger truly removed (freshly charged battery ~12.7V)
-  // Hysteresis 0.5V: prevents relay bounce during Vitronic Storage stage (~12.9V)
+  chargerOnVoltage: 14.0,   // V — detect charger connecting (Bulk/Absorption only)
+                             //     Higher than openHAB's 13.0V because this script has no BLE
+                             //     cross-validation. Prevents false trigger on Storage (13.2V)
+                             //     or Float (13.8V) that caused relay fighting with openHAB.
+  chargerOffVoltage: 13.0,  // V — confirm charger truly removed (1.0V hysteresis)
   lowBattVoltage: 12.0,     // V — emergency cutoff (match openHAB LOW_BATT_V)
   checkIntervalMs: 30000,   // 30s — ADC polling interval
   stabChecks: 3,            // 3 checks (90s) required to confirm charger
   maxOnMinutes: 25,         // Max relay-ON time (local limit, shorter than OH)
   manualMaxOnMinutes: 60,   // Max relay-ON time for manual/external ON (browse footage)
+  cooldownMs: 7200000,      // 2 hours — after relay OFF, ignore charger detection
   relayId: 0                // Relay channel (0 = relay1)
 };
 
@@ -58,7 +67,8 @@ let state = {
   relayOnTime: 0,           // Timestamp when relay was turned ON (ms)
   relayIsOn: false,         // Current relay state
   isManualOn: false,        // True if relay was turned ON externally (app/API)
-  lastVoltage: 0            // Last ADC reading
+  lastVoltage: 0,           // Last ADC reading
+  cooldownUntil: 0          // Timestamp until charger detection is suppressed
 };
 
 // --- Helpers ---
@@ -80,7 +90,8 @@ function relayControl(on) {
         state.relayOnTime = 0;
         state.highVoltageCount = 0;
         state.isManualOn = false;
-        log("Relay OFF");
+        state.cooldownUntil = Date.now() + CONFIG.cooldownMs;
+        log("Relay OFF -- cooldown " + (CONFIG.cooldownMs / 3600000) + "h");
       }
     }
   });
@@ -106,7 +117,8 @@ Shelly.addStatusHandler(function (event) {
         state.relayOnTime = 0;
         state.isManualOn = false;
         state.highVoltageCount = 0;
-        log("External relay OFF detected");
+        state.cooldownUntil = Date.now() + CONFIG.cooldownMs;
+        log("External relay OFF detected -- cooldown " + (CONFIG.cooldownMs / 3600000) + "h");
       }
     }
   }
@@ -151,6 +163,21 @@ function checkVoltage() {
     }
 
     // --- Charger detection ---
+    // Skip if in cooldown (dump was recently completed)
+    if (state.cooldownUntil > 0 && Date.now() < state.cooldownUntil) {
+      if (voltage > CONFIG.chargerOnVoltage && state.highVoltageCount === 0) {
+        let remainMin = ((state.cooldownUntil - Date.now()) / 60000).toFixed(0);
+        log("Charger detection suppressed -- cooldown " + remainMin + "min remaining");
+      }
+      state.highVoltageCount = 0;
+      return;
+    }
+    // Clear expired cooldown
+    if (state.cooldownUntil > 0 && Date.now() >= state.cooldownUntil) {
+      log("Cooldown expired -- charger detection re-enabled");
+      state.cooldownUntil = 0;
+    }
+
     if (voltage > CONFIG.chargerOnVoltage) {
       state.highVoltageCount++;
       log("Voltage " + voltage.toFixed(2) + "V > " + CONFIG.chargerOnVoltage +
@@ -195,7 +222,8 @@ function checkVoltage() {
 log("Starting -- check every " + (CONFIG.checkIntervalMs / 1000) + "s");
 log("Charger ON: " + CONFIG.chargerOnVoltage + "V, OFF: " + CONFIG.chargerOffVoltage + "V, " +
     "low battery: " + CONFIG.lowBattVoltage + "V, " +
-    "auto max: " + CONFIG.maxOnMinutes + "min, manual max: " + CONFIG.manualMaxOnMinutes + "min");
+    "auto max: " + CONFIG.maxOnMinutes + "min, manual max: " + CONFIG.manualMaxOnMinutes + "min, " +
+    "cooldown: " + (CONFIG.cooldownMs / 3600000) + "h");
 
 // On startup: read actual relay state to sync internal tracking.
 // Prevents desync if Shelly rebooted while relay was ON.
