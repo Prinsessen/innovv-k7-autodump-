@@ -66,6 +66,25 @@ Number   MC_Charger_Yield        "Charged Energy [%.3f kWh]"           <energy> 
 String   MC_Charger_State        "Charger State [%s]"                    <heating>       (gMC_K7_Power)  ["Status"]
 DateTime MC_Charger_Last_Update  "Charger Updated [%1$td.%1$tm %1$tH:%1$tM]" <time>     (gMC_K7_Power)  ["Status"]
 
+// --- Secondary-Connection Detection (drain prevention, added 2026-08-06) ---
+// The Victron charger sits permanently on 230V mains. Its BLE "state" label
+// (Storage/Float/Idle) is IDENTICAL whether the DC clamps are on the bike or
+// hanging in open air — so the label alone cannot tell "connected" from
+// "disconnected". 5 months of InfluxDB data proved the reliable discriminator
+// is the AGREEMENT between two independent voltage sensors:
+//   MC_Charger_Voltage  = Victron's own output (secondary side)
+//   MC_K7_Shelly_Voltage = Shelly ADC on the actual bike battery
+// Clamps ON  -> both read the same node -> delta ~0.08V (median, connected)
+// Clamps OFF -> Victron floats ~13.2V open-circuit while the isolated bike
+//              battery sags -> delta grows to ~0.58V (median, disconnected).
+// Because the ADC offset can drift over months, we do NOT hard-code the
+// delta. Instead MC_Charger_Connected_Delta LEARNS the connected baseline
+// during confirmed real-current charging (>=0.3A = clamps provably on) and
+// the rule flags "disconnected" only when the live delta exceeds
+// baseline + tolerance. This self-calibrates and survives ADC drift.
+Number   MC_Charger_Connected_Delta "Connected Baseline Δ [%.3f V]"     <energy>        (gMC_K7_Power)  ["Measurement"]
+Switch   MC_Secondary_Connected     "Secondary Connected [MAP(k7_connected.map):%s]" <k7-charger-green> (gMC_K7_Power)  ["Status"]
+
 // --- Charge Session History (persisted to InfluxDB) ---
 // Updated by vehicle-motorcycle-k7-charge-history.js on each charge cycle.
 DateTime MC_Charge_Session_Start   "Session Start [%1$td.%1$tm %1$tH:%1$tM]"  <time>      (gMC_K7_Power)  ["Status"]

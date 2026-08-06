@@ -35,6 +35,48 @@ const IGN_DEBOUNCE_S = 5;
 const BLE_PLAUSIBLE_DELTA = 2.0;  // Max V difference between BLE charger and Shelly battery
 const WATCHDOG_INTERVAL_S = 300;  // Relay watchdog every 5 minutes
 
+// --- Home gate (added 2026-08-06) -------------------------------------------
+// The whole charger/dump machine ONLY makes sense when the bike is HOME in the
+// garage on the Victron charger. Away from home there is no charger, so any
+// "charger detected" signal is spurious (e.g. the alternator's 14.5V while
+// riding, or a stale BLE reading). Gating on home removes an entire class of
+// false triggers AND the confusing "travel regime" seen in historical data.
+// Two independent home sources, combined with OR for maximum robustness:
+//   ESP_Springfield_Home  - the bike's own Shelly BLE beacon seen ONLY by the
+//                           garage ESP32 node (strongest signal, GPS-immune)
+//   Vehicle10_GeofenceName - Traccar GPS geofence name (backup if the Shelly
+//                           BLE fails to connect, which it sometimes does).
+//                           Set HOME_GEOFENCE_MATCH below to a substring of
+//                           YOUR home geofence name.
+// OR is safe here: "home" never turns the relay on by itself — the charger
+// still has to be BLE-present with a real secondary connection. Home is a
+// defence-in-depth gate, not the trigger.
+const HOME_GEOFENCE_MATCH = 'Home';   // substring match on Vehicle10_GeofenceName — set to your own home geofence name
+
+// --- Secondary-connection detection (added 2026-08-06) ----------------------
+// Proves the Victron's DC clamps are physically on the bike (not just mains on
+// 230V). Two independent proofs, either is sufficient:
+//   Proof B (current): real charge current >= CURRENT_PROOF_A can only flow
+//     into a connected battery. Calibration-independent. Covers Bulk/Absorption.
+//   Proof A (self-calibrated delta): at low current the charger holds a fixed
+//     setpoint, so we compare |ChgV - BattV| against a LEARNED connected
+//     baseline. Connected when delta <= baseline + SECONDARY_TOLERANCE.
+// 5 months of data: connected delta ~0.08V, disconnected ~0.58V — a clean gap.
+const CURRENT_PROOF_A      = 0.10;  // >= this many amps proves clamps are on the bike
+const BASELINE_LEARN_A     = 0.30;  // learn the connected baseline only above this current
+const SECONDARY_TOLERANCE  = 0.35;  // delta may exceed baseline by this much and still count as connected
+const DEFAULT_BASELINE     = 0.10;  // bootstrap baseline before any real charge is observed (data median +0.08V)
+const BASELINE_EMA_ALPHA   = 0.10;  // exponential-moving-average weight for new baseline samples
+const BASELINE_SANE_LO     = -0.50; // reject learning samples outside this window (guards against
+const BASELINE_SANE_HI     =  0.50; //   transient/garbage readings poisoning the baseline)
+
+// --- Absolute relay-on safety (added 2026-08-06) ----------------------------
+// The in-memory maxOnTimer is lost on a script reload, which historically let
+// the relay hang ON in TRANSFERRING (that state was NOT covered by the
+// watchdog). RELAY_ABS_MAX_MIN is enforced by the watchdog using the PERSISTED
+// MC_K7_Relay_Since timestamp, so it survives reloads and covers every state.
+const RELAY_ABS_MAX_MIN    = 30;    // hard ceiling on relay-ON time, timer-independent
+
 const STATES = {
   PARKED: 'PARKED', RIDING: 'RIDING', CHARGING: 'CHARGING',
   TRANSFERRING: 'TRANSFERRING', COOLDOWN: 'COOLDOWN', DUMP_DONE: 'DUMP_DONE',
@@ -201,22 +243,30 @@ function isBLEPlausible() {
 // Compute human-readable charger connection status from BLE signals.
 // Three states: Offline (no mains), Standby (mains but cable off bike),
 // Charging — <stage> (actively charging battery).
+// Also refreshes MC_Secondary_Connected (the physical-clamp truth) so the
+// sitemap shows whether the DC side is really on the bike.
 function updateChargerConnection() {
   try {
     var bleOnline = items.getItem('MC_Charger_BLE_Online').state === 'ON';
     var bleState = getBLEState();
+    var secondary = isSecondaryConnected();
     var status;
     if (!bleOnline) {
       status = 'Offline';
+    } else if (!secondary) {
+      // Mains present but the DC clamps are NOT on the bike — this is the
+      // exact "forgot to plug in" condition that drained the battery overnight.
+      status = 'Standby (clamps off bike)';
     } else {
       var chargingStates = ['Bulk', 'Absorption', 'Float', 'Storage', 'Recondition'];
       if (chargingStates.indexOf(bleState) >= 0) {
         status = 'Charging \u2014 ' + bleState;
       } else {
-        status = 'Standby (idle)';
+        status = 'Connected (idle)';
       }
     }
     items.getItem('MC_Charger_Connection').postUpdate(status);
+    items.getItem('MC_Secondary_Connected').postUpdate(secondary ? 'ON' : 'OFF');
   } catch (e) {
     console.warn(LOG + ': updateChargerConnection error: ' + e.message);
   }
@@ -231,14 +281,136 @@ function rearmToParked(reason) {
   cache.private.put('rearmTime', time.ZonedDateTime.now());
 }
 
+// ---------------------------------------------------------------------------
+// isHome() — is the motorcycle physically home in the garage?
+// ---------------------------------------------------------------------------
+// Returns true if EITHER home source says home (OR = robust against a single
+// source failing; the Shelly BLE beacon occasionally fails to connect, and GPS
+// occasionally loses fix indoors — either alone is enough to confirm home).
+// Fail-safe default is FALSE: if neither can be read we treat the bike as
+// away, which only means "don't auto-power the K7" — the battery-safe choice.
+function isHome() {
+  try {
+    var esp = false;
+    try { esp = items.getItem('ESP_Springfield_Home').state === 'ON'; } catch (e) {}
+    var geo = false;
+    try {
+      var g = items.getItem('Vehicle10_GeofenceName').state;
+      geo = (g && g.toString().indexOf(HOME_GEOFENCE_MATCH) >= 0);
+    } catch (e) {}
+    return esp || geo;
+  } catch (e) { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// isSecondaryConnected() — are the Victron DC clamps physically on the bike?
+// ---------------------------------------------------------------------------
+// This is the core drain-prevention test. It answers "is the charger actually
+// feeding the bike battery" — NOT merely "is the charger powered on 230V".
+// Pure function (no side effects); safe to call anywhere.
+//
+//   Gate : BLE must be online AND fresh — a stale reading tells us nothing.
+//   Proof B (current): current >= CURRENT_PROOF_A → definitely connected
+//            (current can only flow into a battery that is wired up).
+//   Proof A (delta)  : at low current, compare live |ChgV - BattV| to the
+//            LEARNED connected baseline. Connected when the delta has not
+//            risen more than SECONDARY_TOLERANCE above that baseline
+//            (disconnection makes BattV sag → delta grows above baseline).
+//
+// Fail-safe default is FALSE (assume disconnected) whenever data is missing —
+// a false "connected" is exactly what drained the battery, so we bias the
+// other way.
+function isSecondaryConnected() {
+  try {
+    if (items.getItem('MC_Charger_BLE_Online').state !== 'ON' || !isBLEFresh()) return false;
+
+    var amps = parseFloat(items.getItem('MC_Charger_Current').state);
+    if (!isNaN(amps) && amps >= CURRENT_PROOF_A) return true;  // Proof B
+
+    var chgV = parseFloat(items.getItem('MC_Charger_Voltage').state);
+    var batV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
+    if (isNaN(chgV) || isNaN(batV)) return false;              // no data → assume disconnected
+
+    var baseline = getConnectedBaseline();
+    var delta = chgV - batV;
+    // One-sided upper bound: connected when delta has not climbed past the
+    // learned baseline by more than the tolerance. Lower/negative deltas
+    // (e.g. voltage rising through Bulk) are still "connected".
+    return delta <= (baseline + SECONDARY_TOLERANCE);          // Proof A
+  } catch (e) { return false; }
+}
+
+// Returns the learned connected-baseline delta, or the bootstrap default if
+// nothing has been learned yet (item NULL on a fresh install).
+function getConnectedBaseline() {
+  try {
+    var it = items.getItem('MC_Charger_Connected_Delta');
+    if (it.isUninitialized || it.state === 'NULL') return DEFAULT_BASELINE;
+    var v = parseFloat(it.state);
+    return isNaN(v) ? DEFAULT_BASELINE : v;
+  } catch (e) { return DEFAULT_BASELINE; }
+}
+
+// Update the connected baseline via EMA, but ONLY when we have hard proof the
+// clamps are on the bike (real current >= BASELINE_LEARN_A) AND the bike is
+// home AND the sample is sane. This lets the baseline track slow ADC drift
+// (which broke a fixed threshold in historical data) without ever learning
+// from a disconnected or travel-regime reading.
+function learnConnectedBaseline() {
+  try {
+    if (!isHome() || !isBLEFresh()) return;
+    var amps = parseFloat(items.getItem('MC_Charger_Current').state);
+    if (isNaN(amps) || amps < BASELINE_LEARN_A) return;
+
+    var chgV = parseFloat(items.getItem('MC_Charger_Voltage').state);
+    var batV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
+    if (isNaN(chgV) || isNaN(batV)) return;
+
+    var sample = chgV - batV;
+    if (sample < BASELINE_SANE_LO || sample > BASELINE_SANE_HI) {
+      console.debug(LOG + ': Baseline sample ' + sample.toFixed(3) + 'V out of sane range \u2014 ignored');
+      return;
+    }
+    var prev = getConnectedBaseline();
+    var next = (prev === DEFAULT_BASELINE && items.getItem('MC_Charger_Connected_Delta').isUninitialized)
+      ? sample                                                  // first ever sample: seed directly
+      : (1 - BASELINE_EMA_ALPHA) * prev + BASELINE_EMA_ALPHA * sample;
+    items.getItem('MC_Charger_Connected_Delta').postUpdate(next.toFixed(3));
+    console.debug(LOG + ': Baseline learn \u2014 sample=' + sample.toFixed(3) + 'V (I=' + amps.toFixed(2) + 'A) \u2192 baseline=' + next.toFixed(3) + 'V');
+  } catch (e) { console.warn(LOG + ': learnConnectedBaseline error: ' + e.message); }
+}
+
 function startChargerSequence(voltage, source) {
   var currentState = getState();
   if (currentState !== STATES.PARKED) return;
 
-  // Accept if BLE confirms charging/connected OR voltage above threshold (fallback)
+  // HARD HOME GATE. The K7 auto-power exists only to dump dashcam footage while
+  // the bike is home on the charger. If we are NOT home, powering the relay can
+  // only drain the bike battery (this is exactly the fault we are fixing). The
+  // 2026-05/06 motorcycle trip proved that away-from-home readings look nothing
+  // like the home charger regime, so away = never power.
+  if (!isHome()) {
+    console.info(LOG + ': Charger sequence blocked \u2014 bike not home (ESP+GPS both away). Source=' + source);
+    return;
+  }
+
+  // Accept ONLY when the DC clamps are physically on the bike:
+  //   - actively charging (BLE stage = Bulk/Absorption/...), OR
+  //   - isSecondaryConnected() proves the clamps are on via current/delta.
+  // The old code accepted the loose "connected" BLE flag, which is TRUE even
+  // when the charger sits in Storage with its clamps hanging in open air — the
+  // root cause of the overnight drain.
   var bleCharging = isBLECharging();
-  var bleConnected = isBLEConnected();
-  if (!bleCharging && !bleConnected && voltage <= CHARGER_ON_V) return;
+  var bleConnected = isSecondaryConnected();
+  if (!bleCharging && !bleConnected && voltage <= CHARGER_ON_V) {
+    // DRAIN GUARD (primary). Neither active charging nor a proven physical
+    // connection, and battery below the charger threshold → do NOT power the
+    // relay. This is the exact clamps-off-bike condition that used to drain the
+    // battery overnight. Logged so the block is auditable.
+    console.info(LOG + ': Charger sequence blocked \u2014 clamps not on bike (BLE=' +
+      getBLEState() + ', sec=off, V=' + voltage.toFixed(1) + 'V). Source=' + source);
+    return;
+  }
 
   // BLE/Pi4 connectivity gate: without Pi4, K7_Dump_Status never updates
   // so relay would stay ON until MAX_ON_MIN safety timeout with no benefit.
@@ -274,14 +446,18 @@ function startChargerSequence(voltage, source) {
       var recheck = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
       var bleOnline = isBLEOnline();
       var bleChg = isBLECharging();
-      var bleCon = isBLEConnected();
+      var bleCon = isSecondaryConnected();  // physical-clamp truth, not loose BLE flag
 
-      // PRIMARY: BLE is authoritative when online — trust completely
-      //   Accept charging OR connected (Storage/Idle = charger still present)
-      // FALLBACK: No BLE available, use voltage threshold
+      // PRIMARY: BLE is authoritative when online — confirm ONLY if the clamps
+      //   are proven on the bike (charging stage OR isSecondaryConnected()).
+      // FALLBACK: No BLE available, use voltage threshold.
+      // Re-check isHome() here too: the bike must still be home after the
+      // stabilisation delay (it could have been rolled out in the meantime).
       var confirmed;
-      if (bleOnline) {
-        confirmed = bleChg || bleCon;  // BLE online: confirm if charger connected in any state
+      if (!isHome()) {
+        confirmed = false;
+      } else if (bleOnline) {
+        confirmed = bleChg || bleCon;  // BLE online: require physical connection proof
       } else {
         confirmed = recheck > CHARGER_ON_V;  // No BLE: voltage fallback
       }
@@ -339,6 +515,22 @@ rules.JSRule({
   execute: function () {
     console.info(LOG + ': System start - initializing');
     relayOff('System start');
+
+    // RECONCILE the relay-ON timestamp. MC_K7_Relay_Since is restoreOnStartup
+    // (so the watchdog's absolute max-on survives a reload while the relay is
+    // genuinely ON). But if the relay is OFF at startup it never *changes*, so
+    // the Relay State Tracker (Rule 7) does not fire to clear the restored
+    // value \u2014 which left a stale "Relay ON Since" hanging on the sitemap even
+    // though the relay was off. Clear it here whenever the relay is not ON.
+    try {
+      if (items.getItem('MC_K7_Relay').state !== 'ON') {
+        var since = items.getItem('MC_K7_Relay_Since').state;
+        if (since && since !== 'NULL' && since !== 'UNDEF') {
+          items.getItem('MC_K7_Relay_Since').postUpdate('NULL');
+          console.info(LOG + ': Init: cleared stale Relay_Since (relay is OFF)');
+        }
+      }
+    } catch (e) { console.warn(LOG + ': Init Relay_Since reconcile error: ' + e.message); }
 
     // Preserve DUMP_DONE across script reloads \u2014 dump already done,
     // no need to re-trigger. Will re-arm when charger truly disconnects.
@@ -882,7 +1074,15 @@ rules.JSRule({
   description: 'Computes human-readable charger connection status from BLE signals',
   triggers: [
     triggers.ItemStateChangeTrigger('MC_Charger_BLE_Online'),
-    triggers.ItemStateChangeTrigger('MC_Charger_State')
+    triggers.ItemStateChangeTrigger('MC_Charger_State'),
+    // Voltage/current drive the secondary-connection delta. When the charger
+    // sits still in Storage at 0A after the clamps come off the bike, neither
+    // BLE_Online nor State changes — but the battery slowly sags and the delta
+    // grows past the threshold. Recompute on voltage/current ticks so the
+    // clamps-off transition is detected within a poll cycle, not left stale.
+    triggers.ItemStateChangeTrigger('MC_Charger_Voltage'),
+    triggers.ItemStateChangeTrigger('MC_K7_Shelly_Voltage'),
+    triggers.ItemStateChangeTrigger('MC_Charger_Current')
   ],
   execute: function () {
     updateChargerConnection();
@@ -897,23 +1097,102 @@ rules.JSRule({
 // =============================================================================
 rules.JSRule({
   name: 'K7 Power - Relay Safety Watchdog',
-  description: 'Periodic check: force relay OFF if state machine says it should be OFF',
+  description: 'Periodic check: force relay OFF on illegal state, absolute max-on, or drain (clamps off bike)',
   triggers: [
-    triggers.GenericCronTrigger('0 */5 * * * ?')  // Every 5 minutes
+    triggers.GenericCronTrigger('0 */2 * * * ?')  // Every 2 minutes (fast drain response)
   ],
   execute: function () {
     try {
+      // Always refresh the secondary-connection status first. This guarantees
+      // MC_Secondary_Connected re-evaluates at least every 2 min even if the
+      // charger values sit perfectly still (belt-and-suspenders to the
+      // event-driven recompute in Rule 10).
+      updateChargerConnection();
+
       var relayState = items.getItem('MC_K7_Relay').state;
+      if (relayState !== 'ON') {
+        // Self-heal a stale "Relay ON Since": if the relay is OFF but the
+        // timestamp still holds a value (e.g. restored on startup with no
+        // subsequent ON->OFF change to clear it), clear it so the sitemap
+        // never shows a misleading "ON Since" while the relay is off.
+        try {
+          var since = items.getItem('MC_K7_Relay_Since').state;
+          if (since && since !== 'NULL' && since !== 'UNDEF') {
+            items.getItem('MC_K7_Relay_Since').postUpdate('NULL');
+            console.info(LOG + ': WATCHDOG: cleared stale Relay_Since (relay OFF)');
+          }
+        } catch (e3) {}
+        return;  // nothing else to guard while OFF
+      }
       var currentState = getState();
-      // States where relay MUST be OFF
+
+      // GUARD 1 \u2014 illegal state. Relay must be OFF in these resting states.
+      // Force the relay OFF but DO NOT re-arm: DUMP_DONE means footage is already
+      // transferred, so re-arming could restart a pointless dump cycle. Keeping
+      // the state simply leaves the relay off where it belongs.
       var mustBeOff = [STATES.PARKED, STATES.DUMP_DONE, STATES.COOLDOWN, STATES.LOW_BATTERY];
-      if (relayState === 'ON' && mustBeOff.indexOf(currentState) >= 0) {
-        console.warn(LOG + ': WATCHDOG: Relay is ON but state is ' + currentState + ' \u2014 forcing OFF');
+      if (mustBeOff.indexOf(currentState) >= 0) {
+        console.warn(LOG + ': WATCHDOG: Relay ON but state is ' + currentState + ' \u2014 forcing OFF');
         relayOff('WATCHDOG: relay ON in ' + currentState);
         items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: relay ON in ' + currentState + ' \u2014 forced OFF');
+        return;
+      }
+
+      // GUARD 2 \u2014 absolute max-on, using the PERSISTED MC_K7_Relay_Since
+      // timestamp rather than an in-memory timer. This survives a rules reload
+      // (which silently discards the in-memory maxOnTimer) and covers EVERY
+      // active state (TRANSFERRING/CHARGING), so a hung relay can never outlast
+      // RELAY_ABS_MAX_MIN regardless of how it got stuck.
+      try {
+        var sinceRaw = items.getItem('MC_K7_Relay_Since').state;
+        if (sinceRaw && sinceRaw !== 'NULL' && sinceRaw !== 'UNDEF') {
+          var since = time.ZonedDateTime.parse(sinceRaw.toString());
+          var onMin = time.Duration.between(since, time.ZonedDateTime.now()).toMinutes();
+          if (onMin >= RELAY_ABS_MAX_MIN) {
+            console.warn(LOG + ': WATCHDOG: Relay ON for ' + onMin + 'min (>= ' + RELAY_ABS_MAX_MIN + ') \u2014 absolute max-on, forcing OFF');
+            relayOff('WATCHDOG: absolute max-on ' + onMin + 'min');
+            rearmToParked('WATCHDOG: absolute max-on ' + onMin + 'min');
+            items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: absolute max-on ' + onMin + 'min \u2014 forced OFF');
+            return;
+          }
+        }
+      } catch (e2) {
+        console.warn(LOG + ': Watchdog max-on parse error: ' + e2.message);
+      }
+
+      // GUARD 3 \u2014 drain guard. Relay is ON in an active state but the DC
+      // clamps are NOT proven on the bike (isSecondaryConnected() false). This
+      // is the precise overnight-drain condition: charger in Storage, clamps in
+      // open air, relay feeding the K7 straight off the bike battery. Kill it.
+      if ((currentState === STATES.TRANSFERRING || currentState === STATES.CHARGING) && !isSecondaryConnected()) {
+        console.warn(LOG + ': WATCHDOG: Relay ON in ' + currentState + ' but charger clamps NOT on bike (drain risk) \u2014 forcing OFF');
+        relayOff('WATCHDOG: drain guard \u2014 clamps off bike in ' + currentState);
+        rearmToParked('WATCHDOG: drain guard \u2014 clamps off bike');
+        items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: clamps off bike in ' + currentState + ' \u2014 forced OFF (drain guard)');
+        return;
       }
     } catch (e) {
       console.error(LOG + ': Watchdog error: ' + e.message);
     }
+  }
+});
+
+// =============================================================================
+// Rule 12: Secondary-Connection Baseline Learner
+// The charger reports "Storage" whether its clamps are on the bike or hanging
+// in open air, so we cannot trust the charger state alone. Instead we learn the
+// voltage delta (ChargerV - BatteryV) that is TRUE while real current is
+// flowing (clamps provably on the bike) and use it as the reference for
+// isSecondaryConnected(). Self-calibrating so it tracks slow ADC drift that
+// historically broke any fixed threshold. Triggers on charger-current changes;
+// learnConnectedBaseline() itself enforces the home + current + sanity gates.
+// =============================================================================
+rules.JSRule({
+  name: 'K7 Power - Secondary Baseline Learner',
+  description: 'Learns connected-delta baseline during confirmed charging current (clamps proven on bike)',
+  triggers: [triggers.ItemStateChangeTrigger('MC_Charger_Current')],
+  execute: function () {
+    learnConnectedBaseline();
+    updateChargerConnection();  // refresh MC_Secondary_Connected for the UI
   }
 });
