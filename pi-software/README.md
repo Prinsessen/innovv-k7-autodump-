@@ -387,7 +387,7 @@ cat /var/log/innovv-k7-backup.log
 - [x] ~~**K7 time sync**~~ — **DONE** (2026-08-08). Camera clock synced to the Pi's NTP time at the start of every dump cycle (`cmd=3005` date + `cmd=3006` time, both verified `Status=0`). Keeps on-screen + filename timestamps accurate; drift can never exceed the gap between two cycles. Item `K7_Last_Time_Sync` records the last sync.
 - [ ] **Parking mode** — Handle parking/accident folder types when they appear
 - [ ] **Retention policy** — Auto-delete old footage from NAS after N days
-- [ ] **Notifications** — Push alert on dump errors or K7 offline for extended period. *(Groundwork done: all fault conditions — SD low/full/removed, NAS low, K7 httpd down — now write to `K7_Last_Error`; a push channel just needs to hook onto that item + `K7_Camera_Online`.)*
+- [x] ~~**Notifications**~~ — **DONE** (2026-08-08). Fault alerts on every K7 auto-dump problem — SD low/full/removed, NAS low, K7 httpd down, dump errors — by watching the single `K7_Last_Error` item. De-duped (same error not re-sent within 30 min) and baseline-seeded on startup so reloads don't spam. Rule: [openhab/rules/vehicle-motorcycle-k7-notify.js](../openhab/rules/vehicle-motorcycle-k7-notify.js) (public version uses openHAB Cloud broadcast; swap `sendAlert()` for your own channel). Deliberately does **not** alert on plain `K7_Camera_Online=OFF` (that's the normal parked state).
 
 ## Troubleshooting
 

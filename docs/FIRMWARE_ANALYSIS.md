@@ -750,7 +750,7 @@ still growing).
 15. **Traccar integration** — bike arrives → trigger dump sequence
 16. **Shelly Plus Uni automation** — automatic OUT1 on/off based on dump state
 17. **Timeout protection** — 30-minute safety cutoff
-18. **Notifications** — pushover/signal alert on dump complete or errors
+18. **Notifications** — ✅ **DONE** (2026-08-08). Fault alert on dump errors, watching `K7_Last_Error` (de-duped, baseline-seeded). See `openhab/rules/vehicle-motorcycle-k7-notify.js`.
 19. **Dashboard** — OpenHAB sitemap showing K7 status, last dump, storage used
 
 ---
