@@ -12,6 +12,7 @@ Group   gK7                                     "INNOVV K7 Dashcam"             
 String      K7_Dump_Status                      "Dump Status [%s]"              <k7-sync-blue>  (gK7)   ["Status"]
 Switch      K7_Camera_Online                    "K7 Online [MAP(k7_onoff.map):%s]" <k7-online-green> (gK7) ["Status"]
 DateTime    K7_Last_Dump                        "Last Dump [%1$td.%1$tm.%1$tY %1$tH:%1$tM]" <k7-time-blue> (gK7) ["Status"]
+DateTime    K7_Last_Time_Sync                   "K7 Clock Synced [%1$td.%1$tm.%1$tY %1$tH:%1$tM]" <k7-timesync-green> (gK7) ["Status"]
 String      K7_Last_Error                       "Last Error [%s]"               <k7-alert-red>  (gK7)   ["Status"]
 
 // --- WiFi connection ---

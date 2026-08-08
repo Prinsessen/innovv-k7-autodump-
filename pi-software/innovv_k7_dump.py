@@ -287,6 +287,24 @@ class InnovvK7Dump:
         except Exception as e:
             self.log.warning(f"Could not read Pi temperature: {e}")
 
+    def _sync_k7_time(self):
+        """Sync the K7 camera clock to the Pi's NTP time at the start of a cycle.
+
+        The K7's real-time clock drifts, which corrupts both the burned-in
+        on-screen timestamp and the filename timestamps of recorded footage.
+        The Pi is NTP-synchronised (Europe/Copenhagen), so we push its
+        wall-clock time to the camera every dump cycle (cmd=3005 + cmd=3006).
+        Best-effort: failures are logged but never abort the cycle.
+        """
+        try:
+            if self.k7.set_datetime():
+                self.openhab.update_last_time_sync()
+                self.log.info("K7 clock synced to Pi NTP time")
+            else:
+                self.log.warning("K7 clock sync not confirmed by camera")
+        except Exception as e:
+            self.log.warning(f"Could not sync K7 time: {e}")
+
     def _report_sd_free_space(self):
         """Query the K7 camera SD-card free space (cmd=3017) and report to OpenHAB.
 
@@ -673,7 +691,11 @@ class InnovvK7Dump:
                 self._update_session(session_id, 0, 0, "error_httpd")
                 return False
 
-            # Step 1d: Report K7 SD-card free space (cmd=3017)
+            # Step 1d: Sync the K7 clock to the Pi's NTP time (fixes RTC drift
+            # that would otherwise corrupt on-screen + filename timestamps)
+            self._sync_k7_time()
+
+            # Step 1e: Report K7 SD-card free space (cmd=3017)
             self._report_sd_free_space()
 
             # Step 2: Get file listing

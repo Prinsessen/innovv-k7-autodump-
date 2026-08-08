@@ -34,6 +34,14 @@ CMD_HEARTBEAT = 3012
 CMD_FILE_LISTING = 3015
 CMD_FIRMWARE_VERSION = 3016
 CMD_DISK_FREE = 4003
+# Set the camera clock (manual §5.3.5 / §5.3.6). Both take a &str= value:
+#   cmd=3005 str=YYYY.MM.DD  (date)
+#   cmd=3006 str=hh:mm:ss    (time)
+# The K7's RTC can drift, which corrupts the burned-in on-screen timestamp AND
+# the filename timestamps. We push the Pi's NTP-synced local time each cycle.
+# VERIFIED on the K7 firmware 2026-08-08: both 3005 and 3006 return Status=0.
+CMD_SET_DATE = 3005
+CMD_SET_TIME = 3006
 # SD-card free space (manual §5.3.17) — returns <Value> in bytes.
 # VERIFIED on the K7 2026-08-08: cmd=3017 -> <Status>0</Status><Value>bytes</Value>.
 # (The 4003 path above is unverified on this firmware; 3017 is the authoritative one.)
@@ -88,16 +96,21 @@ class K7ApiClient:
     def _api_base(self) -> str:
         return f"http://{self.host}:{self.http_port}"
 
-    def _api_request(self, cmd: int, par: str = None, timeout: int = 10) -> Optional[str]:
+    def _api_request(
+        self, cmd: int, par: str = None, str_par: str = None, timeout: int = 10
+    ) -> Optional[str]:
         """
         Send a command to the Novatek CarDV HTTP API.
 
-        URL format: http://192.168.1.254/?custom=1&cmd=<CMD>[&par=<PAR>]
-        Returns: raw response text, or None on failure.
+        URL format: http://192.168.1.254/?custom=1&cmd=<CMD>[&par=<PAR>][&str=<STR>]
+        Some commands (e.g. set date/time) take their argument as &str= rather
+        than &par= (see manual §5.3.6). Returns raw response text, or None.
         """
         url = f"{self._api_base}/?custom=1&cmd={cmd}"
         if par:
             url += f"&par={par}"
+        if str_par:
+            url += f"&str={str_par}"
 
         try:
             log.debug(f"API request: {url}")
@@ -165,6 +178,38 @@ class K7ApiClient:
                 return True
             time.sleep(1)
         log.warning(f"K7 httpd not ready after {max_wait}s")
+        return False
+
+    def set_datetime(self, when: Optional[time.struct_time] = None) -> bool:
+        """Sync the K7's clock to the given (or current local) time.
+
+        Sends cmd=3005 (date, str=YYYY.MM.DD) then cmd=3006 (time, str=hh:mm:ss)
+        per manual §5.3.5 / §5.3.6. Uses the Pi's local wall-clock time, which is
+        NTP-synchronised to Europe/Copenhagen, so the K7's on-screen and filename
+        timestamps stay accurate across RTC drift.
+
+        The time command (3006) is the critical one and its format is verified
+        from the manual. The date command (3005) is sent first. Both are VERIFIED
+        working on the K7 firmware (2026-08-08, each returned Status=0). Returns
+        True if the time command was acknowledged (Status=0).
+        """
+        lt = when if when is not None else time.localtime()
+        date_str = time.strftime("%Y.%m.%d", lt)
+        time_str = time.strftime("%H:%M:%S", lt)
+
+        # Date first (verified on this firmware — cmd=3005 returns Status=0)
+        resp = self._api_request(CMD_SET_DATE, str_par=date_str)
+        if resp is not None and self._parse_xml_status(resp) == 0:
+            log.info(f"K7 date set to {date_str}")
+        else:
+            log.warning(f"K7 date set not confirmed (cmd=3005 str={date_str})")
+
+        # Time (verified format, the one that matters for drift)
+        resp = self._api_request(CMD_SET_TIME, str_par=time_str)
+        if resp is not None and self._parse_xml_status(resp) == 0:
+            log.info(f"K7 time set to {time_str}")
+            return True
+        log.warning(f"K7 time set not confirmed (cmd=3006 str={time_str})")
         return False
 
     def get_firmware_version(self) -> Optional[str]:

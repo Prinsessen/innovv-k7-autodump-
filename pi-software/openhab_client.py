@@ -155,6 +155,13 @@ class OpenHABClient:
         """Update the K7 camera SD-card health status as a readable string (cmd=3024)."""
         self._update_item(self._item("SD_Card_Status"), text)
 
+    def update_last_time_sync(self, timestamp: Optional[datetime] = None):
+        """Record when the K7 clock was last synced to the Pi's NTP time."""
+        if timestamp is None:
+            timestamp = datetime.now()
+        formatted = timestamp.strftime("%Y-%m-%dT%H:%M:%S")
+        self._update_item(self._item("Last_Time_Sync"), formatted)
+
     def update_pi_disk_free(self, free_mb: int):
         """Update Pi SD card free space in MB."""
         self._update_item(self._item("Pi_Disk_Free_MB"), str(free_mb))
