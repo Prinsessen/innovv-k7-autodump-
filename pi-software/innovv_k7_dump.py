@@ -296,9 +296,14 @@ class InnovvK7Dump:
 
         The K7 firmware only exposes FREE bytes (cmd=3017); there is no working
         total/used command (cmd=4003 returns Status=-5 on this firmware). We derive
-        a fill percentage against the card's nominal capacity (512 GB = 512e9 bytes).
+        a fill percentage against the card's nominal capacity, which is configurable
+        via safety.sd_card_total_gb (default 512 GB) so it can be changed if the
+        card is swapped for a different size.
         """
-        SD_TOTAL_BYTES = 512_000_000_000  # nominal 512 GB card capacity (512 * 10^9)
+        safety = self.config.get("safety", {})
+        total_gb = safety.get("sd_card_total_gb", 512)
+        low_warn_gb = safety.get("sd_card_low_warn_gb", 8)
+        sd_total_bytes = int(total_gb) * 1_000_000_000  # nominal GB (10^9) capacity
         try:
             free_bytes = self.k7.get_sd_free_bytes()
             if free_bytes is None:
@@ -306,10 +311,10 @@ class InnovvK7Dump:
                 return
             free_gb = free_bytes / (1024 ** 3)
             self.openhab.update_sd_free_gb(free_gb)
-            used_pct = max(0.0, min(100.0, (SD_TOTAL_BYTES - free_bytes) / SD_TOTAL_BYTES * 100.0))
+            used_pct = max(0.0, min(100.0, (sd_total_bytes - free_bytes) / sd_total_bytes * 100.0))
             self.openhab.update_sd_used_pct(used_pct)
             self.log.info(f"K7 SD card: {free_gb:.1f}GB free ({used_pct:.0f}% used)")
-            if free_gb < 8.0:
+            if free_gb < low_warn_gb:
                 self.log.warning(f"K7 SD card low: only {free_gb:.1f}GB free!")
                 self.openhab.update_error(f"K7 SD low: {free_gb:.1f}GB free")
         except Exception as e:

@@ -31,7 +31,9 @@
     "safety": {
         "max_dump_duration_min": 30,
         "max_total_download_gb": 50,
-        "min_nas_free_space_gb": 10
+        "min_nas_free_space_gb": 10,
+        "sd_card_total_gb": 512,
+        "sd_card_low_warn_gb": 8
     },
     "database": {
         "path": "/opt/innovv-k7/downloaded_files.db"
