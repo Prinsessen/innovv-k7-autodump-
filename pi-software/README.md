@@ -38,6 +38,7 @@ The Pi 3 uses **dual networking**:
 | API | Novatek CarDV (`/?custom=1&cmd=<CMD>`) |
 | FTP | **NOT available** — HTTP only |
 | Channels | Dual: Front (_F) + Rear (_R) |
+| SD Card | Nominal 512 GB (~474 GB usable). Firmware exposes **free bytes only** via `cmd=3017`; no total/used command works (`cmd=4003` → `-5`). Fill-% is derived against `safety.sd_card_total_gb` (configurable, default 512). Card health via `cmd=3024`. |
 
 ### K7 Folder Structure
 
