@@ -950,4 +950,45 @@ template, rfkill persistence, and prints a configuration checklist.
 - INNOVV App (Android): `cn.rxt.case.innovv` on Google Play
 - INNOVV App (iOS): https://apps.apple.com/us/app/innovv/id1235353801
 - Novatek NA51055 CarDV SDK documentation (vendor-internal)
+- Novatek NT9666x Wi-Fi Command User Guide (`docs/NT9666x-WiFi-Command-User-Guide.pdf`) — HTTP command set (`cmd=3010` format, `cmd=3016` heartbeat), MJPEG live stream on port 8192
 - K7 Manual: https://drive.google.com/file/d/1p9SigjXJ8GfYPslu9Xc0cdqsC-V1-lLz/view
+
+---
+
+## Field Incidents
+
+### 2026-08-08 — Full SD card hangs firmware → no WiFi AP (recurring)
+
+**Symptom.** The dump never runs even though the Shelly relay is ON and the Pi
+radio comes up. openHAB shows `K7-AP-NOT-VISIBLE` and a stale
+`K7_Last_Error = "WiFi connect failed"`. In an earlier variant the camera
+crash-loops mid-dump (dump starts → K7 reboots → watchdog forces the relay OFF
+→ re-arm → repeat).
+
+**Root cause.** A **full or corrupt SD card** makes the Novatek NT96660 firmware
+hang during storage-init, which runs **before hostapd**. The `INNOVV_K7` access
+point therefore never broadcasts, so the Pi has nothing to associate to. The
+card — not the WiFi credentials — is the real fault; "WiFi connect failed" is
+only a downstream symptom.
+
+**Why remote recovery fails.** The format command (`cmd=3010&par=1`) needs the
+AP up to be delivered — but the bad card is exactly why the AP won't come up.
+Chicken-and-egg: `k7_format_sd.py` / `k7_format_watch.py` can only catch brief
+boot-window flickers and usually lose the association mid-connect
+("AP vanished mid-connect").
+
+**Fix (physical).** Factory-reset the camera and **reformat the SD card**
+(preferably in-camera so the correct Novatek `/INNOVVK7/` directory structure is
+recreated; otherwise FAT32/exFAT). A factory reset does **not** change the
+credentials: SSID `INNOVV_K7`, WPA2-PSK `12345678`, AP `192.168.1.254`.
+
+**This has now recurred.** As routine maintenance, consider a periodic in-camera
+format via `cmd=3010&par=1` **while the AP is healthy** to stop the card filling
+to the point of a storage-init hang. The two helper scripts in `pi-software/`
+are kept for that purpose — they are only useful when the AP is already
+reachable, **not** as a rescue once the card has hung the firmware.
+
+**Related fix.** `innovv_k7_dump.py` now clears `K7_Last_Error` on the
+"0 new files" success path too (previously the clear ran only in the full
+download path, so a stale error stuck in the UI after a clean cycle that found
+no new files).
