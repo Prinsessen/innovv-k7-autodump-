@@ -296,10 +296,9 @@ class InnovvK7Dump:
 
         The K7 firmware only exposes FREE bytes (cmd=3017); there is no working
         total/used command (cmd=4003 returns Status=-5 on this firmware). We derive
-        a fill percentage against a fixed usable capacity measured from an empty
-        card (509361192960 bytes ~= 474.4 GB usable on the 512 GB card).
+        a fill percentage against the card's nominal capacity (512 GB = 512e9 bytes).
         """
-        SD_TOTAL_BYTES = 509361192960  # usable capacity of empty card (cmd=3017 on empty)
+        SD_TOTAL_BYTES = 512_000_000_000  # nominal 512 GB card capacity (512 * 10^9)
         try:
             free_bytes = self.k7.get_sd_free_bytes()
             if free_bytes is None:
