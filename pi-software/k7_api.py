@@ -38,7 +38,8 @@ CMD_DISK_FREE = 4003
 # VERIFIED on the K7 2026-08-08: cmd=3017 -> <Status>0</Status><Value>bytes</Value>.
 # (The 4003 path above is unverified on this firmware; 3017 is the authoritative one.)
 CMD_FREE_SPACE = 3017
-# SD-card status (manual §5.3.24) — returns <Value>: 1 = card present/OK.
+# SD-card status (manual §5.3.24) — returns <Value>: 0=removed, 1=inserted/OK,
+# 2=locked; on FS error returns 3024+FS_STATUS (3024=disk err ... 3029=card full).
 # VERIFIED on the K7 2026-08-08: cmd=3024 -> <Status>0</Status><Value>1</Value>.
 CMD_CARD_STATUS = 3024
 

@@ -323,20 +323,40 @@ class InnovvK7Dump:
         # SD card health (cmd=3024): 1 = present/OK, other = removed/error.
         try:
             status = self.k7.get_card_status()
-            if status is None:
-                self.openhab.update_sd_card_status("Ukendt (svarer ikke)")
-            elif status == 1:
-                self.openhab.update_sd_card_status("OK")
-            elif status == 0:
-                self.openhab.update_sd_card_status("FEJL: intet kort / fjernet")
-                self.log.warning("K7 SD card status=0 (removed / not detected)!")
-                self.openhab.update_error("K7 SD card removed / not detected")
-            else:
-                self.openhab.update_sd_card_status(f"FEJL (kode {status})")
-                self.log.warning(f"K7 SD card status={status} (error)!")
-                self.openhab.update_error(f"K7 SD card error (code {status})")
+            text, is_error = self._decode_card_status(status)
+            self.openhab.update_sd_card_status(text)
+            if is_error:
+                self.log.warning(f"K7 SD card status={status}: {text}")
+                self.openhab.update_error(f"K7 SD card: {text}")
         except Exception as e:
             self.log.warning(f"Could not check K7 SD card status: {e}")
+
+    @staticmethod
+    def _decode_card_status(status):
+        """Decode cmd=3024 card status into (readable text, is_error).
+
+        Per manual §5.3.24:
+          CARD_STATUS:  0=REMOVED, 1=INSERTED(OK), 2=LOCKED
+          On FS error the camera returns 3024 + FS_STATUS:
+            3024=DISK_ERROR, 3025=UNKNOWN_FORMAT, 3026=UNFORMATTED,
+            3027=NOT_INIT, 3028=INIT_OK, 3029=NUM_FULL
+        """
+        if status is None:
+            return "Ukendt (svarer ikke)", False
+        mapping = {
+            0: ("FEJL: kort fjernet", True),
+            1: ("OK", False),
+            2: ("FEJL: kort låst (skrivebeskyttet)", True),
+            3024: ("FEJL: diskfejl", True),
+            3025: ("FEJL: ukendt filsystem", True),
+            3026: ("FEJL: uformateret", True),
+            3027: ("FEJL: ikke initialiseret", True),
+            3028: ("OK (netop initialiseret)", False),
+            3029: ("ADVARSEL: kort fuldt", True),
+        }
+        if status in mapping:
+            return mapping[status]
+        return f"FEJL (kode {status})", True
 
     def _clean_stale_partials(self):
         """Remove stale .partial files from NAS left by interrupted downloads.
