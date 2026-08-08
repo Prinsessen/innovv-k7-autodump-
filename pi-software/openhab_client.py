@@ -151,6 +151,10 @@ class OpenHABClient:
         """Update the K7 camera SD-card fill percentage (derived from free space)."""
         self._update_item(self._item("SD_Used_Pct"), f"{used_pct:.0f}")
 
+    def update_sd_card_status(self, text: str):
+        """Update the K7 camera SD-card health status as a readable string (cmd=3024)."""
+        self._update_item(self._item("SD_Card_Status"), text)
+
     def update_pi_disk_free(self, free_mb: int):
         """Update Pi SD card free space in MB."""
         self._update_item(self._item("Pi_Disk_Free_MB"), str(free_mb))

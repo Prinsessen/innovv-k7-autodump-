@@ -320,6 +320,24 @@ class InnovvK7Dump:
         except Exception as e:
             self.log.warning(f"Could not check K7 SD free space: {e}")
 
+        # SD card health (cmd=3024): 1 = present/OK, other = removed/error.
+        try:
+            status = self.k7.get_card_status()
+            if status is None:
+                self.openhab.update_sd_card_status("Ukendt (svarer ikke)")
+            elif status == 1:
+                self.openhab.update_sd_card_status("OK")
+            elif status == 0:
+                self.openhab.update_sd_card_status("FEJL: intet kort / fjernet")
+                self.log.warning("K7 SD card status=0 (removed / not detected)!")
+                self.openhab.update_error("K7 SD card removed / not detected")
+            else:
+                self.openhab.update_sd_card_status(f"FEJL (kode {status})")
+                self.log.warning(f"K7 SD card status={status} (error)!")
+                self.openhab.update_error(f"K7 SD card error (code {status})")
+        except Exception as e:
+            self.log.warning(f"Could not check K7 SD card status: {e}")
+
     def _clean_stale_partials(self):
         """Remove stale .partial files from NAS left by interrupted downloads.
 

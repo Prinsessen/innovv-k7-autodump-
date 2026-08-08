@@ -35,6 +35,7 @@ Switch      K7_Dump_Movie_E                     "Dump Movie_E (Loop Video) [MAP(
 // --- Storage health ---
 Number      K7_SD_Free_GB                       "Camera SD Free [%.1f GB]"      <k7-sdfree-green>  (gK7)   ["Measurement"]
 Number      K7_SD_Used_Pct                      "Camera SD Used [%.0f %%]"      <k7-sdused-amber>  (gK7)   ["Measurement"]
+String      K7_SD_Card_Status                   "Camera SD Card [%s]"           <k7-cardhealth-teal> (gK7) ["Status"]
 Number      K7_NAS_Free_GB                      "NAS Free [%.0f GB]"             <k7-disk-cyan>  (gK7)   ["Measurement"]
 Number      K7_Pi_Disk_Free_MB                  "Pi SD Free [%d MB]"            <k7-disk-cyan>  (gK7)   ["Status"]
 Number      K7_Pi_Temperature                   "Pi Temperature [%.1f °C]"      <k7-temp-red-v1>   (gK7)   ["Measurement"]

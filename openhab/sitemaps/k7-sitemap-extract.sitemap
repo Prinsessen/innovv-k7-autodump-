@@ -36,6 +36,7 @@ Frame label="INNOVV K7 Dashcam" {
         Frame label="Storage Health" {
             Text item=K7_SD_Free_GB label="Camera SD Free [%.1f GB]" icon="k7-sdfree-green"
             Text item=K7_SD_Used_Pct label="Camera SD Used [%.0f %%]" icon="k7-sdused-amber"
+            Text item=K7_SD_Card_Status label="Camera SD Card [%s]" icon="k7-cardhealth-teal"
             Text item=K7_NAS_Free_GB label="NAS Free [%.0f GB]" icon="k7-disk-cyan"
             Text item=K7_Pi_Disk_Free_MB label="Pi SD Free [%d MB]" icon="k7-disk-cyan"
         }

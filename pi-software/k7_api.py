@@ -38,6 +38,9 @@ CMD_DISK_FREE = 4003
 # VERIFIED on the K7 2026-08-08: cmd=3017 -> <Status>0</Status><Value>bytes</Value>.
 # (The 4003 path above is unverified on this firmware; 3017 is the authoritative one.)
 CMD_FREE_SPACE = 3017
+# SD-card status (manual §5.3.24) — returns <Value>: 1 = card present/OK.
+# VERIFIED on the K7 2026-08-08: cmd=3024 -> <Status>0</Status><Value>1</Value>.
+CMD_CARD_STATUS = 3024
 
 # MP4 file starts with an "ftyp" box (byte offset 4-7)
 _MP4_FTYP_MAGIC = b'ftyp'
@@ -553,4 +556,26 @@ class K7ApiClient:
                 return int(value_elem.text)
         except (ET.ParseError, ValueError) as e:
             log.warning(f"cmd=3017 parse error: {e}")
+        return None
+
+    def get_card_status(self) -> Optional[int]:
+        """Get SD-card status via cmd=3024 (manual §5.3.24).
+
+        Returns the integer <Value> on success (1 = card present/OK), or None if
+        the camera didn't answer / the response was unparseable. VERIFIED working
+        on the K7 firmware 2026-08-08 (returned <Value>1</Value>).
+        """
+        resp = self._api_request(CMD_CARD_STATUS)
+        if not resp:
+            return None
+        try:
+            root = ET.fromstring(resp)
+            if self._parse_xml_status(resp) != 0:
+                log.warning("cmd=3024 returned non-zero status")
+                return None
+            value_elem = root.find(".//Value")
+            if value_elem is not None and value_elem.text:
+                return int(value_elem.text)
+        except (ET.ParseError, ValueError) as e:
+            log.warning(f"cmd=3024 parse error: {e}")
         return None
