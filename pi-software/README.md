@@ -374,10 +374,11 @@ cat /var/log/innovv-k7-backup.log
 ## TODO / Future Work
 
 - [x] ~~**Shelly Plus Uni relay integration**~~ — **DONE** (v1 2026-03-11). Auto power-on via dual-sensor charger detection (BLE + voltage), auto power-off after dump complete. See [K7_AUTO_POWER_README.md](../docs/K7_AUTO_POWER_README.md).
+- [x] ~~**SD card health monitoring**~~ — **DONE** (2026-08-08). Camera SD free space (`cmd=3017`), derived fill-% (configurable total), and card status (`cmd=3024`, full enum incl. removed / locked / unformatted / **card-full**) reported every dump cycle. Three independent early-warnings against the full-SD firmware hang. Items `K7_SD_Free_GB` / `K7_SD_Used_Pct` / `K7_SD_Card_Status`.
 - [ ] **K7 time sync** — Verify clock stays accurate; consider syncing from Pi if drift detected
 - [ ] **Parking mode** — Handle parking/accident folder types when they appear
 - [ ] **Retention policy** — Auto-delete old footage from NAS after N days
-- [ ] **Notifications** — Push alert on dump errors or K7 offline for extended period
+- [ ] **Notifications** — Push alert on dump errors or K7 offline for extended period. *(Groundwork done: all fault conditions — SD low/full/removed, NAS low, K7 httpd down — now write to `K7_Last_Error`; a push channel just needs to hook onto that item + `K7_Camera_Online`.)*
 
 ## Troubleshooting
 
