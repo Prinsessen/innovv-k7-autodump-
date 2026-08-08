@@ -142,8 +142,10 @@ These are the standard SDK commands (NA51055). The K7 may support a subset:
 |-----|-------------|------------|
 | 3012 | **Heartbeat / keep-alive** | Must send periodically! |
 | 3016 | Get firmware version | |
-| 3019 | Get SD card status | |
-| 3024 | Format SD card | ⚠️ Destructive |
+| 3005 | **Set date** ✅ verified | `str=YYYY.MM.DD` — returns `Status=0` |
+| 3006 | **Set time** ✅ verified | `str=hh:mm:ss` — returns `Status=0` |
+| 3017 | **Get SD free space** ✅ verified | Returns `<Value>` in bytes |
+| 3024 | **Get SD card status** ✅ verified | `<Value>`: 0=removed, 1=OK, 2=locked, 3024–3029=FS error |
 
 #### WiFi Configuration (via API)
 | CMD | Description | Parameters |
@@ -853,15 +855,19 @@ There is **no DCIM folder**. Folders appear dynamically.
 
 ### K7 Clock & Loop Recording
 
-The K7 maintains its clock across power cycles — timestamps in filenames are
-accurate. The dates `20260309`/`20260310` in our initial dump were correct.
+The K7's internal RTC drifts over time. Left unsynced, both the burned-in
+on-screen timestamp and the filename timestamps slowly become inaccurate. The
+dump service therefore **syncs the K7 clock to the Pi's NTP time at the start of
+every dump cycle** — `cmd=3005` (date, `str=YYYY.MM.DD`) then `cmd=3006` (time,
+`str=hh:mm:ss`), both verified returning `Status=0` on this firmware. Because
+the sync runs whenever the camera is online, drift can never exceed the gap
+between two cycles, and manually opening the INNOVV phone app is no longer
+needed.
 
 **Loop recording:** The K7 automatically deletes the oldest `Movie_E/` files
 when the SD card fills up, so Movie_E only contains recent footage. `Photo_E/`
 and `EMR_E/` files are **never auto-deleted** and persist until the user
 removes them manually.
-
-For best accuracy, periodically sync time via the INNOVV phone app.
 
 ### BCM43455 WiFi Firmware Bug
 
