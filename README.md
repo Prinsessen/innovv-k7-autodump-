@@ -142,10 +142,16 @@ See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab)
 innovv-k7-autodump/
 ├── README.md                              ← You are here
 ├── pi-software/
-│   ├── innovv_k7_dump.py                  ← Main dump service (~850 lines)
+│   ├── innovv_k7_dump.py                  ← Main dump service (~1100 lines)
 │   ├── wifi_manager.py                    ← WiFi connection management
-│   ├── k7_api.py                          ← K7 HTTP API client
+│   ├── k7_api.py                          ← K7 HTTP API client (heartbeat, listing, download, delete, free space, card status)
 │   ├── openhab_client.py                  ← openHAB REST API reporter
+│   ├── k7_liveproxy.py                    ← On-demand MJPEG live-view proxy (k7-liveproxy.service)
+│   ├── k7_diskfree.py                     ← One-shot SD free-space probe (cmd=3017)
+│   ├── k7_disktest.py                     ← One-shot disk-info probe (compares 3017 vs 4003)
+│   ├── k7_captest.py                      ← Read-only capability probe (cmd 3022/3024/3030/3007/3014)
+│   ├── k7_format_sd.py                    ← SD format helper (cmd=3010) — use with care
+│   ├── k7_format_watch.py                 ← Watches for SD-full and auto-formats (cmd=3010)
 │   ├── config.example.json                ← Configuration template
 │   ├── install.sh                         ← Pi setup script (run as root)
 │   ├── backup-sd.sh                       ← Monthly Pi SD backup to NAS
@@ -156,11 +162,12 @@ innovv-k7-autodump/
 ├── openhab/
 │   ├── items/
 │   │   ├── motorcycle_k7_power.items      ← Shelly + BLE charger + session tracking + virtual state items (30 items)
-│   │   └── innovv_k7.items                ← Pi dump service status items
+│   │   └── innovv_k7.items                ← Pi dump service status + Storage Health items (SD free/used/card status)
 │   ├── things/
 │   │   └── shelly.things                  ← Shelly Plus Uni thing definition
 │   ├── rules/
 │   │   └── vehicle-motorcycle-k7-power.js ← State machine (10 JSRules, dual-sensor BLE + voltage)
+│   ├── icons/                             ← Sitemap icons (k7-*, victron-*)
 │   └── transform/
 │       └── k7_onoff.map                   ← ON/OFF display mapping
 └── docs/
@@ -306,6 +313,9 @@ Copy `pi-software/config.example.json` to `config.json` and edit:
 | `download.nas_mount_path` | `/mnt/nas/dashcam` | NAS mount point for footage storage |
 | `openhab.url` | `http://192.168.1.10:8080` | Your openHAB REST API URL |
 | `safety.max_dump_duration_min` | `30` | Maximum dump time (battery protection) |
+| `safety.min_nas_free_space_gb` | `10` | Abort dump if NAS free space drops below this |
+| `safety.sd_card_total_gb` | `512` | Camera SD nominal capacity — drives the fill-% calc (change if you swap cards) |
+| `safety.sd_card_low_warn_gb` | `8` | Warn when the camera SD free space drops below this |
 
 ## Documentation
 

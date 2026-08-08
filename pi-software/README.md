@@ -75,17 +75,30 @@ verified transfer to NAS).
 
 ### K7 API Commands
 
+The K7 runs a Novatek "CarDV" HTTP API at `http://192.168.1.254/?custom=1&cmd=<CMD>`.
+Commands below were verified live on the K7 firmware (2026-08-08) unless noted.
+
 | Command | Purpose | Status |
 |---------|---------|--------|
-| 3012 | Heartbeat | Working |
-| 3015 | File listing (XML) | Returns -21 (empty), fall back to HTML |
+| 3012 | Heartbeat / keep-alive | Working |
+| 3014 | Query current status (bulk device state) | Verified — returns ~25 sub-commands in one call |
+| 3015 | File listing (XML) | Returns -21 (empty) — falls back to HTML listing |
 | 3016 | Firmware version | Working |
-| 3019 | SD card status | Untested |
-| 4003 | Disk free | Untested |
+| 3017 | SD free space (bytes) | **Verified** — `<Status>0</Status><Value>bytes</Value>` |
+| 3022 | Hardware capacity (bitmask) | Verified — returns `<Value>18</Value>` (project-defined) |
+| 3024 | SD card status | **Verified** — 0=removed, 1=present/OK, 2=locked; on FS error returns 3024+FS_STATUS (3029 = card full) |
+| 3030 | Movie size capacity (list) | Verified — lists UHD/QHD/FHD P30 dual-channel modes |
+| 3007 | Auto-off timer (0=never … 5=10 min) | Read via 3014 (currently 0 = never); write untested |
+| 4003 | Disk free (legacy) | **Dead** — returns `Status -5` on this firmware; use 3017 instead |
 
 The XML file listing API (cmd=3015) returns `Status=-21` and no file elements.
 The service uses HTML directory listing as primary method — recursive parsing
 of the K7's built-in web server directory pages.
+
+**SD card status (cmd=3024)** is the most authoritative early-warning signal: it
+reports card removal, write-lock, and — critically — a **card-full** state
+(value 3029 = FS_NUM_FULL). A full card is what makes the K7 firmware hang before
+it starts its WiFi AP, so this is polled every dump cycle alongside free space.
 
 ## Files
 
@@ -199,6 +212,11 @@ Number      K7_Pending_Deletes      "Pending K7 Deletes [%d]"                   
 // --- Settings ---
 Switch      K7_Dump_Movie_E         "Dump Movie_E (Loop Video) [MAP(k7_onoff.map):%s]" <k7-movie-orange> (gK7)
 
+// --- Storage health (camera SD, read via cmd=3017 / 3024 each cycle) ---
+Number      K7_SD_Free_GB           "Camera SD Free [%.1f GB]"                  <k7-sdfree-green>    (gK7)
+Number      K7_SD_Used_Pct          "Camera SD Used [%.0f %%]"                  <k7-sdused-amber>    (gK7)
+String      K7_SD_Card_Status       "Camera SD Card [%s]"                       <k7-cardhealth-teal> (gK7)
+
 // --- Pi health ---
 Number      K7_Pi_Disk_Free_MB      "Pi SD Free [%d MB]"                        <k7-disk-cyan>      (gK7)
 Number      K7_Pi_Temperature       "Pi Temperature [%.1f °C]"                  <k7-temp-red-v1>    (gK7)
@@ -212,6 +230,8 @@ The dump service pushes updates to OpenHAB throughout the cycle:
 - **WiFi band**: Auto-detected frequency (e.g. "5 GHz" or "2.4 GHz")
 - **Files/MB downloaded**: Updated after every file
 - **Verified/Deleted/Pending**: Updated after every file's delete operation
+- **Camera SD free / used %**: Read via cmd=3017 each cycle; fill % derived against the configurable `safety.sd_card_total_gb` (default 512 GB), warns below `safety.sd_card_low_warn_gb` (default 8 GB)
+- **Camera SD card status**: Read via cmd=3024 each cycle; readable string (OK / kort fjernet / låst / uformateret / kort fuldt …), warns on any non-OK state
 - **Pi disk free**: Reported at start of each dump cycle, warns if < 500MB
 - **Pi temperature**: SoC temperature reported on startup + every 5 min in idle loop, warns if ≥ 80°C
 
