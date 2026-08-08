@@ -287,6 +287,35 @@ class InnovvK7Dump:
         except Exception as e:
             self.log.warning(f"Could not read Pi temperature: {e}")
 
+    def _report_sd_free_space(self):
+        """Query the K7 camera SD-card free space (cmd=3017) and report to OpenHAB.
+
+        A full SD card causes the K7 firmware to hang before it starts hostapd,
+        so the WiFi AP never comes up. Tracking free space each cycle lets us spot
+        that condition before it becomes a lockout.
+
+        The K7 firmware only exposes FREE bytes (cmd=3017); there is no working
+        total/used command (cmd=4003 returns Status=-5 on this firmware). We derive
+        a fill percentage against a fixed usable capacity measured from an empty
+        card (509361192960 bytes ~= 474.4 GB usable on the 512 GB card).
+        """
+        SD_TOTAL_BYTES = 509361192960  # usable capacity of empty card (cmd=3017 on empty)
+        try:
+            free_bytes = self.k7.get_sd_free_bytes()
+            if free_bytes is None:
+                self.log.warning("Could not read K7 SD free space (cmd=3017 no value)")
+                return
+            free_gb = free_bytes / (1024 ** 3)
+            self.openhab.update_sd_free_gb(free_gb)
+            used_pct = max(0.0, min(100.0, (SD_TOTAL_BYTES - free_bytes) / SD_TOTAL_BYTES * 100.0))
+            self.openhab.update_sd_used_pct(used_pct)
+            self.log.info(f"K7 SD card: {free_gb:.1f}GB free ({used_pct:.0f}% used)")
+            if free_gb < 8.0:
+                self.log.warning(f"K7 SD card low: only {free_gb:.1f}GB free!")
+                self.openhab.update_error(f"K7 SD low: {free_gb:.1f}GB free")
+        except Exception as e:
+            self.log.warning(f"Could not check K7 SD free space: {e}")
+
     def _clean_stale_partials(self):
         """Remove stale .partial files from NAS left by interrupted downloads.
 
@@ -601,6 +630,9 @@ class InnovvK7Dump:
                 self.openhab.update_error("K7 httpd unresponsive after deletes")
                 self._update_session(session_id, 0, 0, "error_httpd")
                 return False
+
+            # Step 1d: Report K7 SD-card free space (cmd=3017)
+            self._report_sd_free_space()
 
             # Step 2: Get file listing
             self.log.info("Getting file listing from K7...")

@@ -143,6 +143,14 @@ class OpenHABClient:
         """Update NAS free space in GB."""
         self._update_item(self._item("NAS_Free_GB"), f"{free_gb:.1f}")
 
+    def update_sd_free_gb(self, free_gb: float):
+        """Update the K7 camera SD-card free space in GB (from cmd=3017)."""
+        self._update_item(self._item("SD_Free_GB"), f"{free_gb:.1f}")
+
+    def update_sd_used_pct(self, used_pct: float):
+        """Update the K7 camera SD-card fill percentage (derived from free space)."""
+        self._update_item(self._item("SD_Used_Pct"), f"{used_pct:.0f}")
+
     def update_pi_disk_free(self, free_mb: int):
         """Update Pi SD card free space in MB."""
         self._update_item(self._item("Pi_Disk_Free_MB"), str(free_mb))
