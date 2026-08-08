@@ -650,6 +650,7 @@ class InnovvK7Dump:
 
             if not new_files:
                 self.openhab.update_status("complete (no new files)")
+                self.openhab.update_error("")  # Clear stale errors — cycle succeeded
                 self._update_session(session_id, 0, 0, "complete")
                 return True
 

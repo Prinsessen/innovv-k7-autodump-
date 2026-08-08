@@ -1,0 +1,26 @@
+[Unit]
+Description=INNOVV K7 Live-View Proxy (on-demand MJPEG on :8192)
+Documentation=file:/opt/innovv-k7/k7_liveproxy.py
+After=network-online.target
+Wants=network-online.target
+# Mutually exclusive with the clip-dump service: only one owner of wlan1 +
+# the camera mode at a time. Starting this stops the dump; stopping this
+# restores the dump (ExecStopPost below).
+Conflicts=innovv-k7-dump.service
+
+[Service]
+Type=simple
+# Pause the auto clip-dump before we take over wlan1 + camera live-view mode.
+ExecStartPre=-/bin/systemctl stop innovv-k7-dump.service
+ExecStart=/opt/innovv-k7/.venv/bin/python /opt/innovv-k7/k7_liveproxy.py
+# Give the script time to stop live view, disconnect and radio-off cleanly.
+TimeoutStopSec=25
+KillSignal=SIGTERM
+# Resume the auto clip-dump once live view is stopped.
+ExecStopPost=-/bin/systemctl start innovv-k7-dump.service
+Restart=no
+
+# NOTE: intentionally NOT enabled at boot (on-demand). Start it only when you
+# want to watch live:  sudo systemctl start k7-liveproxy
+[Install]
+WantedBy=multi-user.target
