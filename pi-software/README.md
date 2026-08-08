@@ -77,6 +77,8 @@ verified transfer to NAS).
 
 The K7 runs a Novatek "CarDV" HTTP API at `http://192.168.1.254/?custom=1&cmd=<CMD>`.
 Commands below were verified live on the K7 firmware (2026-08-08) unless noted.
+See the [Novatek NT9666x WiFi Command User Guide](../docs/NT9666x-WiFi-Command-User-Guide.pdf)
+for the full official command reference.
 
 | Command | Purpose | Status |
 |---------|---------|--------|

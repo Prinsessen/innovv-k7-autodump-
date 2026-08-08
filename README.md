@@ -322,6 +322,7 @@ Copy `pi-software/config.example.json` to `config.json` and edit:
 - [Pi Software README](pi-software/README.md) — Detailed Pi setup, K7 API details, NAS structure, monitoring
 - [Auto-Power Documentation](docs/K7_AUTO_POWER_README.md) — MOSFET circuit, dual-sensor BLE integration, state machine, all 10 rules
 - [K7 Firmware Analysis](docs/FIRMWARE_ANALYSIS.md) — Reverse engineering of the K7 firmware (Novatek NA51055, RTL8821CS WiFi, CarDV HTTP API)
+- [Novatek NT9666x WiFi Command User Guide](docs/NT9666x-WiFi-Command-User-Guide.pdf) — Official Novatek CarDV HTTP API reference (the `cmd=NNNN` commands used by this project, e.g. 3017 free space, 3024 card status)
 - [Victron BLE Monitor](https://github.com/Prinsessen/victron-ble-openhab) — Standalone BLE daemon for the Victron charger
 
 ## Related Projects
