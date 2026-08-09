@@ -346,9 +346,12 @@ function isHome() {
 //            only for the brief window before the daemon has posted Proof D
 //            (item NULL right after a daemon restart).
 //   Proof A (last resort): self-calibrated |ChgV-BattV| delta, used ONLY when
-//            Proof D is Unknown/settling. NOTE: the delta method false-reads
-//            "connected" at a full battery (open-circuit float ≈ resting
-//            battery) — that is exactly why Proof D now leads.
+//            Proof D is genuinely UNKNOWN (daemon posted nothing yet). Proof D
+//            "Uncertain"/"Off?" both read as DISCONNECTED — a full battery
+//            draws no current so the current registers vanish, and the delta
+//            method false-reads "connected" there (open-circuit float ≈ resting
+//            battery). That is exactly why Proof D leads and the delta is only
+//            a bootstrap.
 //
 // Fail-safe default is FALSE (assume disconnected) on any missing data — a
 // false "connected" is what drains the battery, so we bias the other way.
@@ -384,11 +387,20 @@ function evaluateSecondary() {
   if (!isNaN(amps) && amps >= CURRENT_PROOF_A)
     return { on: true, reason: 'Proof B \u2014 ' + amps.toFixed(2) + ' A' };
 
-  // Proof D actively says clamps off (3 sparse cycles, no current). Trust it
-  // over the delta method, which false-positives at a full battery.
-  if (proofD === 'off') return { on: false, reason: 'Off \u2014 no current (Proof D)' };
+  // Proof D says NOT connected. Both "Off?" (3 sparse cycles) and "Uncertain"
+  // (settling, e.g. current pulses just stopped) mean the clamps are off — a
+  // full battery draws no current, so the current registers disappear. Trust
+  // Proof D over the delta method, which false-positives at a full battery
+  // (open-circuit float ~13.2V ≈ resting battery ~12.86V → small delta).
+  // Validated live 2026-08-09: after physical disconnect Proof D goes
+  // Connected → Uncertain (never straight to Off?), so Uncertain MUST read off.
+  if (proofD === 'off' || proofD === 'uncertain')
+    return { on: false, reason: 'Off \u2014 no current (Proof D ' + proofD + ')' };
 
-  // Proof A (last resort): delta, only reached when Proof D is Unknown/settling.
+  // Proof A (last resort): delta, ONLY when Proof D is genuinely unknown — i.e.
+  // the daemon has not posted a verdict yet (item NULL right after a restart).
+  // Never reached while the daemon is live, because Proof D is always one of
+  // connected/off/uncertain in that case.
   var chgV = parseFloat(items.getItem('MC_Charger_Voltage').state);
   var batV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
   if (isNaN(chgV) || isNaN(batV)) return { on: false, reason: 'Off \u2014 no charger data' };
