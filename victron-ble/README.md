@@ -152,6 +152,9 @@ Defined in `items/motorcycle_k7_power.items`:
 | `MC_Charger_Yield` | Number | Charged energy today (kWh) |
 | `MC_Charger_State` | String | Charge state (Off/Idle/Bulk/Absorption/Float/Storage/Recondition) |
 | `MC_Charger_Last_Update` | DateTime | Last successful data update |
+| `MC_Charger_Secondary_Proof` | String | **Proof D** — clamp-on-bike verdict derived from BLE data richness: "Connected (current seen)" / "Off? (sparse data — clamps off)" / "Uncertain (settling)". Primary input to the rule's `isSecondaryConnected()`. |
+| `MC_Charger_Reg_Count` | Number | Registers parsed in the last BLE cycle (Proof D evidence) |
+| `MC_Charger_Data_Bytes` | Number | Bytes in the last BLE cycle (Proof D evidence) |
 
 ### Sitemap
 

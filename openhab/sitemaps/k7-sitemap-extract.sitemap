@@ -45,8 +45,9 @@ Frame label="INNOVV K7 Dashcam" {
             Switch item=MC_K7_Relay label="K7 Relay" icon="k7-relay-blue" mappings=[ON="ON", OFF="OFF"]
             Text item=MC_Charger_Connection label="Charger [%s]" icon="k7-charger-green"
             Text item=MC_Secondary_Connected label="Clamps on Bike [MAP(k7_connected.map):%s]" icon="k7-charger-green"
+            Text item=MC_Secondary_Reason label="Detection [%s]" icon="k7-sync-blue" visibility=[MC_Secondary_Reason!="NULL", MC_Secondary_Reason!=""]
             Text item=MC_K7_Shelly_Voltage label="Battery Voltage [%.2f V]" icon="k7-battery-green"
-            Text item=MC_K7_Power_Reason label="Reason [%s]" icon="k7-sync-blue" visibility=[MC_K7_Power_Reason!="NULL", MC_K7_Power_Reason!=""]
+            Text item=MC_K7_Power_Reason label="State Reason [%s]" icon="k7-sync-blue" visibility=[MC_K7_Power_Reason!="NULL", MC_K7_Power_Reason!=""]
             Text item=MC_K7_Relay_Since label="Relay ON Since [%1$td.%1$tm %1$tH:%1$tM]" icon="k7-time-blue" visibility=[MC_K7_Relay_Since!="NULL"]
         }
         Frame label="Shelly Device Status" {
@@ -72,10 +73,11 @@ Frame label="Victron Charger" {
         Frame label="Energy" {
             Text item=MC_Charger_Yield label="Charged Energy [%.3f kWh]" icon="victron-yield-green"
         }
-        Frame label="Connection" {
-            Text item=MC_Charger_Connection label="Connection [%s]" icon="victron-plug-blue"
+        Frame label="Clamp Connection" {
             Text item=MC_Secondary_Connected label="Clamps on Bike [MAP(k7_connected.map):%s]" icon="victron-plug-blue"
-            Text item=MC_Charger_Connected_Delta label="Connected Baseline Δ [%.3f V]" icon="victron-current-amber" visibility=[MC_Charger_Connected_Delta!="NULL"]
+            Text item=MC_Secondary_Reason label="Detection [%s]" icon="victron-state-teal" visibility=[MC_Secondary_Reason!="NULL", MC_Secondary_Reason!=""]
+            Text item=MC_Charger_Secondary_Proof label="Proof D (daemon) [%s]" icon="victron-plug-blue" visibility=[MC_Charger_Secondary_Proof!="NULL"]
+            Text item=MC_Charger_Connected_Delta label="Baseline Δ (Proof A) [%.3f V]" icon="victron-current-amber" visibility=[MC_Charger_Connected_Delta!="NULL"]
             Text item=MC_Charger_BLE_Online label="BLE Online [MAP(k7_onoff.map):%s]" icon="victron-bluetooth-blue"
             Text item=MC_Charger_Last_Update label="Last Update [%1$td.%1$tm %1$tH:%1$tM]" icon="k7-time-blue"
         }

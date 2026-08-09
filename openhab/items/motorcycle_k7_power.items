@@ -84,6 +84,23 @@ DateTime MC_Charger_Last_Update  "Charger Updated [%1$td.%1$tm %1$tH:%1$tM]" <ti
 // baseline + tolerance. This self-calibrates and survives ADC drift.
 Number   MC_Charger_Connected_Delta "Connected Baseline Δ [%.3f V]"     <energy>        (gMC_K7_Power)  ["Measurement"]
 Switch   MC_Secondary_Connected     "Secondary Connected [MAP(k7_connected.map):%s]" <k7-charger-green> (gMC_K7_Power)  ["Status"]
+// Short human reason naming the proof that decided the clamp state, e.g.
+// "Proof D — current seen", "Proof B — 0.35 A", "Off — no current (Proof D)".
+// Set by updateChargerConnection() in vehicle-motorcycle-k7-power.js.
+String   MC_Secondary_Reason        "Clamp Detection [%s]"                           <text>             (gMC_K7_Power)  ["Status"]
+
+// --- Proof D: Secondary-Connection via BLE Data Richness (added 2026-08-09) ---
+// The charger exposes NO 'secondary connected' register (Victron-confirmed;
+// 0xEDD5/0xEDD7 proved to be plain mirrors in a live clamp on/off A/B test).
+// But the BLE STREAM changes with the clamp state: when the clamps are on the
+// bike, charge-current registers appear in the cycle (current can only flow in
+// a closed circuit). MC_Charger_Secondary_Proof is the daemon's verdict
+// ("Connected (current seen)" / "Off? ..." / "Uncertain ...") and is the
+// PRIMARY input to isSecondaryConnected() in the JS rule. Reg_Count/Data_Bytes
+// are kept for history/forensics; they are not shown on the sitemap.
+Number   MC_Charger_Reg_Count       "BLE Registers/Cycle [%d]"           <energy>        (gMC_K7_Power)  ["Measurement"]
+Number   MC_Charger_Data_Bytes      "BLE Data/Cycle [%d B]"             <energy>        (gMC_K7_Power)  ["Measurement"]
+String   MC_Charger_Secondary_Proof "Proof D (Clamps) [%s]"             <network>       (gMC_K7_Power)  ["Status"]
 
 // --- Charge Session History (persisted to InfluxDB) ---
 // Updated by vehicle-motorcycle-k7-charge-history.js on each charge cycle.

@@ -65,6 +65,15 @@ const HOME_GEOFENCE_MATCH = 'Home';   // substring match on Vehicle10_GeofenceNa
 const CURRENT_PROOF_A      = 0.10;  // >= this many amps proves clamps are on the bike
 const BASELINE_LEARN_A     = 0.30;  // learn the connected baseline only above this current
 const SECONDARY_TOLERANCE  = 0.35;  // delta may exceed baseline by this much and still count as connected
+// Lower bound on the delta (added 2026-08-09). BLE-online only proves the
+// charger has 230V mains — it says NOTHING about the DC clamps. The charger is
+// a SOURCE: when the clamps are on, it and the bike battery are the same node,
+// so at idle current the battery can never sit far ABOVE the charger's own
+// output. If batV exceeds chgV by more than this, an EXTERNAL source is driving
+// the battery over the charger setpoint — in practice the engine's alternator
+// (~14.4V) while the bike idles at the garage. That is NOT a secondary
+// connection, so we reject it (guards against a generator-driven false positive).
+const SECONDARY_LOWER_MARGIN = 0.50; // batV may sit at most this far above chgV and still count as connected
 const DEFAULT_BASELINE     = 0.10;  // bootstrap baseline before any real charge is observed (data median +0.08V)
 const BASELINE_EMA_ALPHA   = 0.10;  // exponential-moving-average weight for new baseline samples
 const BASELINE_SANE_LO     = -0.50; // reject learning samples outside this window (guards against
@@ -195,16 +204,24 @@ function isBLEConnected() {
   } catch (e) { return false; }
 }
 
+// Parse an openHAB-persisted timestamp into a ZonedDateTime.
+// openHAB's DateTimeType.toString() renders the zone offset WITHOUT a colon
+// (e.g. "…+0200"), and the Victron daemon likewise posts "+0100" — but
+// java.time.ZonedDateTime.parse() only accepts the ISO offset WITH a colon
+// ("+02:00"). Normalise before parsing. Centralised here because getting this
+// wrong silently broke the watchdog's absolute max-on guard for days.
+function parseOHDateTime(raw) {
+  var s = raw.toString().replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  return time.ZonedDateTime.parse(s);
+}
+
 // Returns true if BLE data was updated within the last 3 minutes
 // (daemon polls every 30s — 3min = 6 missed polls = definitely stale)
 function isBLEFresh() {
   try {
     var lastUpdate = items.getItem('MC_Charger_Last_Update');
     if (lastUpdate.isUninitialized || lastUpdate.state === 'NULL') return false;
-    var stateStr = lastUpdate.state.toString();
-    // Daemon sends +0100 format — ZonedDateTime needs +01:00 (with colon)
-    stateStr = stateStr.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
-    var then = time.ZonedDateTime.parse(stateStr);
+    var then = parseOHDateTime(lastUpdate.state);
     var age = time.Duration.between(then, time.ZonedDateTime.now()).toMinutes();
     return age < 3;
   } catch (e) {
@@ -249,9 +266,16 @@ function updateChargerConnection() {
   try {
     var bleOnline = items.getItem('MC_Charger_BLE_Online').state === 'ON';
     var bleState = getBLEState();
-    var secondary = isSecondaryConnected();
+    var ev = evaluateSecondary();
+    var secondary = ev.on;
+    try { items.getItem('MC_Secondary_Reason').postUpdate(ev.reason); } catch (e) {}
     var status;
-    if (!bleOnline) {
+    if (!isHome()) {
+      // Bike is away — the charger sits idle in the garage. Its BLE state
+      // (Storage/Float) says nothing about the bike, so report plainly instead
+      // of the misleading "Charging — Storage" / "Standby (clamps off bike)".
+      status = 'Bike away (not on charger)';
+    } else if (!bleOnline) {
       status = 'Offline';
     } else if (!secondary) {
       // Mains present but the DC clamps are NOT on the bike — this is the
@@ -305,39 +329,83 @@ function isHome() {
 // ---------------------------------------------------------------------------
 // isSecondaryConnected() — are the Victron DC clamps physically on the bike?
 // ---------------------------------------------------------------------------
-// This is the core drain-prevention test. It answers "is the charger actually
-// feeding the bike battery" — NOT merely "is the charger powered on 230V".
-// Pure function (no side effects); safe to call anywhere.
+// The core drain-prevention test: "is the charger actually feeding the bike
+// battery" — NOT merely "is the charger powered on 230V". Pure, side-effect
+// free; safe to call anywhere. evaluateSecondary() does the work and also
+// returns a short human reason naming the deciding proof (surfaced in the UI
+// as MC_Secondary_Reason). isSecondaryConnected() is the thin boolean wrapper.
 //
-//   Gate : BLE must be online AND fresh — a stale reading tells us nothing.
-//   Proof B (current): current >= CURRENT_PROOF_A → definitely connected
-//            (current can only flow into a battery that is wired up).
-//   Proof A (delta)  : at low current, compare live |ChgV - BattV| to the
-//            LEARNED connected baseline. Connected when the delta has not
-//            risen more than SECONDARY_TOLERANCE above that baseline
-//            (disconnection makes BattV sag → delta grows above baseline).
+//   Gate : bike home AND charger BLE online+fresh, else off (fail-safe).
+//   Proof D (primary): the Pi daemon reports whether charge-current registers
+//            appeared in its recent BLE cycles (MC_Charger_Secondary_Proof).
+//            Current only flows through a CLOSED circuit, so "current seen" is
+//            a hard physical fact and it holds even at a full battery (the
+//            charger keeps pushing a small maintenance current). Empirically
+//            validated with a live clamp on/off A/B test on 2026-08-09.
+//   Proof B (fallback): instantaneous charge current >= CURRENT_PROOF_A, used
+//            only for the brief window before the daemon has posted Proof D
+//            (item NULL right after a daemon restart).
+//   Proof A (last resort): self-calibrated |ChgV-BattV| delta, used ONLY when
+//            Proof D is Unknown/settling. NOTE: the delta method false-reads
+//            "connected" at a full battery (open-circuit float ≈ resting
+//            battery) — that is exactly why Proof D now leads.
 //
-// Fail-safe default is FALSE (assume disconnected) whenever data is missing —
-// a false "connected" is exactly what drained the battery, so we bias the
-// other way.
-function isSecondaryConnected() {
+// Fail-safe default is FALSE (assume disconnected) on any missing data — a
+// false "connected" is what drains the battery, so we bias the other way.
+
+// Map the daemon's Proof D string (MC_Charger_Secondary_Proof) to a category.
+function getProofD() {
   try {
-    if (items.getItem('MC_Charger_BLE_Online').state !== 'ON' || !isBLEFresh()) return false;
+    var it = items.getItem('MC_Charger_Secondary_Proof');
+    if (it.isUninitialized || it.state === 'NULL') return 'unknown';
+    var s = it.state.toString();
+    if (s.indexOf('Connected') >= 0) return 'connected';
+    if (s.indexOf('Off')       >= 0) return 'off';
+    if (s.indexOf('Uncertain') >= 0) return 'uncertain';
+    return 'unknown';
+  } catch (e) { return 'unknown'; }
+}
 
-    var amps = parseFloat(items.getItem('MC_Charger_Current').state);
-    if (!isNaN(amps) && amps >= CURRENT_PROOF_A) return true;  // Proof B
+// Full evaluation → { on: boolean, reason: 'short why + deciding proof' }.
+function evaluateSecondary() {
+  if (!isHome()) return { on: false, reason: 'Off \u2014 bike not home' };
+  if (items.getItem('MC_Charger_BLE_Online').state !== 'ON' || !isBLEFresh())
+    return { on: false, reason: 'Off \u2014 charger BLE offline' };
 
-    var chgV = parseFloat(items.getItem('MC_Charger_Voltage').state);
-    var batV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
-    if (isNaN(chgV) || isNaN(batV)) return false;              // no data → assume disconnected
+  // Proof D (primary): current physically seen in recent BLE cycles. Current
+  // can only flow through a closed circuit → a hard fact that clamps are on,
+  // holding even at a full battery (charger keeps a small maintenance current).
+  var proofD = getProofD();
+  if (proofD === 'connected') return { on: true, reason: 'Proof D \u2014 current seen' };
 
-    var baseline = getConnectedBaseline();
-    var delta = chgV - batV;
-    // One-sided upper bound: connected when delta has not climbed past the
-    // learned baseline by more than the tolerance. Lower/negative deltas
-    // (e.g. voltage rising through Bulk) are still "connected".
-    return delta <= (baseline + SECONDARY_TOLERANCE);          // Proof A
-  } catch (e) { return false; }
+  // Proof B (fallback): instantaneous current, for the brief window before the
+  // daemon has posted Proof D (item NULL right after a restart).
+  var amps = parseFloat(items.getItem('MC_Charger_Current').state);
+  if (!isNaN(amps) && amps >= CURRENT_PROOF_A)
+    return { on: true, reason: 'Proof B \u2014 ' + amps.toFixed(2) + ' A' };
+
+  // Proof D actively says clamps off (3 sparse cycles, no current). Trust it
+  // over the delta method, which false-positives at a full battery.
+  if (proofD === 'off') return { on: false, reason: 'Off \u2014 no current (Proof D)' };
+
+  // Proof A (last resort): delta, only reached when Proof D is Unknown/settling.
+  var chgV = parseFloat(items.getItem('MC_Charger_Voltage').state);
+  var batV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
+  if (isNaN(chgV) || isNaN(batV)) return { on: false, reason: 'Off \u2014 no charger data' };
+  var delta = chgV - batV;
+  // Generator/alternator rejection: batV far ABOVE chgV means an external
+  // source (the engine's ~14.4V alternator) is driving the battery over the
+  // charger setpoint → the charger is NOT feeding the battery → not connected.
+  if (delta < -SECONDARY_LOWER_MARGIN)
+    return { on: false, reason: 'Off \u2014 external source (engine?)' };
+  var baseline = getConnectedBaseline();
+  if (delta <= (baseline + SECONDARY_TOLERANCE))
+    return { on: true, reason: 'Proof A \u2014 \u0394' + delta.toFixed(2) + ' V' };
+  return { on: false, reason: 'Off \u2014 \u0394' + delta.toFixed(2) + ' V too high' };
+}
+
+function isSecondaryConnected() {
+  try { return evaluateSecondary().on; } catch (e) { return false; }
 }
 
 // Returns the learned connected-baseline delta, or the bootstrap default if
@@ -1146,7 +1214,7 @@ rules.JSRule({
       try {
         var sinceRaw = items.getItem('MC_K7_Relay_Since').state;
         if (sinceRaw && sinceRaw !== 'NULL' && sinceRaw !== 'UNDEF') {
-          var since = time.ZonedDateTime.parse(sinceRaw.toString());
+          var since = parseOHDateTime(sinceRaw);
           var onMin = time.Duration.between(since, time.ZonedDateTime.now()).toMinutes();
           if (onMin >= RELAY_ABS_MAX_MIN) {
             console.warn(LOG + ': WATCHDOG: Relay ON for ' + onMin + 'min (>= ' + RELAY_ABS_MAX_MIN + ') \u2014 absolute max-on, forcing OFF');

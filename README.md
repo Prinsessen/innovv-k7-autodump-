@@ -87,6 +87,20 @@ The system uses **two independent sensors** to detect charger presence, eliminat
 
 See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab) repository for the BLE daemon.
 
+## Clamp-on-Bike Detection (drain prevention)
+
+The charger sits permanently on 230V mains, so "BLE online" says nothing about whether the DC clamps are actually on the bike. Powering the K7 with the clamps hanging in open air would drain the bike battery. `isSecondaryConnected()` proves the physical connection, in priority order:
+
+| Proof | Signal | Why it's trusted |
+|-------|--------|------------------|
+| **D** (primary) | Charge-current registers seen in the daemon's recent BLE cycles (`MC_Charger_Secondary_Proof`) | Current can only flow through a **closed circuit** — a hard physical fact. Holds even at a full battery, where the charger keeps a small maintenance current. |
+| **B** (fallback) | Instantaneous current ≥ 0.10 A | Used only in the brief window before the daemon has posted Proof D. |
+| **A** (last resort) | Self-calibrated `|ChargerV − BatteryV|` delta vs a learned baseline | Only when Proof D is unknown/settling. Note: the delta method false-reads "connected" at a full battery, which is exactly why Proof D leads. |
+
+Gated by `isHome()` (bike present via BLE beacon or GPS geofence) and a generator-rejection guard (battery driven far above the charger setpoint = engine alternator, not the charger). The deciding proof is surfaced in the UI as `MC_Secondary_Reason` (e.g. "Proof D — current seen", "Off — no current (Proof D)").
+
+> **Proof D background:** the charger exposes no "secondary connected" characteristic (Victron-confirmed; the `0xEDD5`/`0xEDD7` registers proved to be plain mirrors of the main voltage/current in a live clamp on/off A/B test). The reliable discriminator is simply *whether current is flowing*, which the daemon derives from the BLE register stream.
+
 ## Hardware Required
 
 | Component | Model | Role |
