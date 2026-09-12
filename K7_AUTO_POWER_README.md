@@ -188,14 +188,17 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 
 | Component | Model | Role | Location |
 |-----------|-------|------|----------|
-| Shelly Plus Uni | SNSN-0043X (Gen 2) | Relay + ADC voltage (Voltmeter:100) + WiFi | Mounted on motorcycle |
-| IRFP9140N | P-channel MOSFET, -100V/-23A, TO-247 | High-side power switch for K7 | Inline in K7 wiring harness |
-| 10K resistor | 1/4W, any tolerance | Gate pull-up (fail-safe OFF) | Soldered to MOSFET |
-| 1N4007 diode | Silicon rectifier, 1A/1000V, 0.7V Vf | **INSTALLED** — Blocks MOSFET back-feed into ignition circuit | Inline on ignition wire before K7/MOSFET splice |
+| Shelly Plus Uni | SNSN-0043X (Gen 2) | Relay + coil-sense ADC (Voltmeter:100) + WiFi | **In the garage, on mains** (was: on the motorcycle, until 2026-09-12) |
+| Omron G6S-2 | DPDT signal relay, 12 V coil, 1 kΩ | **Switches the camera's ignition-sense line.** Replaced the MOSFET | On the motorcycle, sealed in heat-shrink |
+| 100 Ω resistor | 1/4 W | **Sense resistor** in the coil's return leg — this is what makes the lead detectable | Garage enclosure |
+| Two-core lead | 2 × 0.5 mm², both cores black, numbered 1 and 2 | Carries the coil circuit between garage and machine | Between the two DTM connectors |
+| ~~IRFP9140N~~ | ~~P-channel MOSFET, TO-247~~ | ~~High-side switch~~ — **removed 2026-09-12**, the relay contact replaces it | — |
+| ~~10K resistor~~ | ~~Gate pull-up~~ | ~~Fail-safe OFF~~ — **removed** with the MOSFET. The relay is fail-safe open by construction: no coil current, no contact | — |
+| 1N4007 diode | Silicon rectifier, 1A/1000V, 0.7V Vf | **INSTALLED, and it stayed.** Blocks back-feed from the switched ignition line into the ignition circuit and the tracker | Inline on the ignition wire, before the splice |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video | Mounted on motorcycle |
 | Teltonika FMM920 | GPS tracker | Ignition state + battery voltage | Mounted on motorcycle |
 | Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Charges battery, PRIMARY charger detection via BLE | Garage |
-| Pi 3 | Raspberry Pi 3 | K7 dump service + Victron BLE monitor | Garage IP65 enclosure (192.168.1.60) |
+| Pi 3 | Raspberry Pi 3 Model B+ | K7 dump service + Victron BLE monitor | Garage IP65 enclosure (192.168.1.60) |
 | ALFA AWUS036ACM | MT7612U, AC1200, USB 3.0 | 5GHz WiFi to K7 AP (mt76 in-kernel driver) | Inside IP65 enclosure with Pi |
 | RP-SMA extension cable | RG174 coax, 2m, RP-SMA M→F | Antenna feed through IP65 enclosure | PG7 cable gland pass-through |
 | 5dBi dual-band antenna | RP-SMA, included with ALFA | 5GHz reception from K7 | Ceiling-mounted above motorcycle |

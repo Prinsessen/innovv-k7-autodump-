@@ -1,5 +1,18 @@
 # INNOVV K7 — Firmware Analysis & Auto-Dump Project
 
+> **Correction, 2026-09-12: the hardware is a Raspberry Pi 3 Model B+, not a Pi 4.**
+> Asked the machine directly — `/proc/device-tree/model` returns
+> `Raspberry Pi 3 Model B Plus Rev 1.3`. This document, the project README and
+> two other files had all said Pi 4, which was the plan rather than what was
+> installed.
+>
+> **The technical content below still holds.** The Pi 3 Model B+ carries the same
+> **BCM43455** radio as the Pi 4 — `brcmfmac43455-sdio` firmware is what the
+> machine loads — so the `ASSOC_REJECT` analysis and the minimal-firmware fix
+> apply unchanged. Only the model name was wrong.
+>
+> The machine has both `wlan0` (built-in) and `wlan1` (the ALFA adapter).
+
 **Firmware:** IK7.20250317.V05 (`IN-K7-1.bin`, 28MB)  
 **Analyzed:** 2026-03-09  
 **Purpose:** Map WiFi/network interfaces for automatic footage dump to NAS
