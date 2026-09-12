@@ -205,7 +205,8 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | `items/motorcycle_k7_power.items` | 22 items: Shelly channels + BLE charger items + virtual state items |
 | `things/shelly.things` | Shelly Plus Uni thing definition (IP: 192.168.1.62) |
 | `automation/js/vehicle-motorcycle-k7-power.js` | State machine (10 JSRules): dual-sensor charger detection with BLE + voltage fallback |
-| `innovv-k7/shelly-failsafe-script.js` | Local failsafe for Shelly (mJS, Script ID 1) — runs on-device when openHAB unavailable |
+| `shelly-scripts/k7-failsafe.js` | **Current** on-device failsafe (mJS, Script ID 1). A heartbeat watchdog — no voltage thresholds |
+| `innovv-k7/shelly-failsafe-script.js` | **Superseded 2026-09-12.** The voltage-threshold failsafe from when the controller lived on the motorcycle. Kept for reference only — do not upload it |
 | `innovv-k7/pi-software/innovv_k7_dump.py` | Pi dump service (**NOT modified**) |
 | `victron-ble/victron_ble_monitor.py` | Pi BLE daemon — reads Victron charger via GATT, posts to openHAB REST API |
 | `sitemaps/k7-sitemap-extract.sitemap` | K7 Auto-Power + Shelly Status + Victron Charger frames (extract — K7 sections only) |
@@ -290,6 +291,79 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 ### 1. Physical Wiring
 
 The Shelly relay drives an IRFP9140N P-channel MOSFET as a high-side switch. This replaces a direct relay connection for minimal size, zero mechanical wear, and near-zero power loss.
+
+#### The switching circuit, as built 2026-09-12
+
+**Nothing here switches the camera's power.** The camera's RED wire is permanent
+12 V straight from the battery and stays connected at all times. What is switched
+is **YELLOW** — an ignition *sense* input that tells the camera when to run.
+
+That distinction is the single most important line in this document. Route the
+camera's main supply through the switching element and you have both under-rated
+it and taken away the permanent feed the camera needs to shut down cleanly.
+
+```
+  GARAGE                                        |  MOTORCYCLE
+                                                |
+  12 V PSU (+) ---- relay COM                   |
+                    relay NO  ------- core 1 ---+--- coil +  \
+                                                |             ) G6S-2
+  12 V PSU (-) ---- 100 ohm ------- core 2 -----+--- coil -  /   DPDT, 1 kOhm
+                        |                       |
+       controller ADC --+                       |   pin 9 (COM) <-- battery +12 V
+       (coil side of the resistor)              |   pin 8 (NO)  --> K7 YELLOW
+                                                |                   via the existing
+                                                |                   1N4007 from ignition
+```
+
+| | |
+|---|---|
+| Coil | 1 kΩ, 12 V |
+| Coil current | ~11.2 mA at 11.22 V across the coil — 25 % above guaranteed pull-in |
+| Sense voltage, lead connected | **0.850 – 0.880 V** |
+| Sense voltage, lead unplugged | **0.000 V**, within one sample |
+| ADC error | reads 0.27 V low, constant |
+
+> **The ADC taps the coil side of the 100 Ω, not the PSU side.** On the wrong side
+> it shares a node with the supply return and can only ever read zero. An earlier
+> drawing had it there, and the hardware was built to match the drawing.
+
+> **Two different pin 1s.** The connector's pin 1 lands on the relay's pin 12;
+> the connector's pin 2 lands on the relay's pin 1. Say *connector 1* or *coil +*,
+> never a bare number — this caused a real mix-up between two people who had both
+> just read the table.
+
+**Why the lead cannot be polled, only probed.** The sense resistor is in the
+coil's return leg, so it carries current only while the coil is energised. With
+the relay open the ADC reads zero whether the lead is plugged in or lying on the
+bench. And a permanent sense current is impossible: the ADC needs ~0.27 V to read
+anything, which is 2.7 mA, which is 2.7 V across a 1 kΩ coil — while a G6S-2 is
+only guaranteed to *release* below 1.2 V. Any current big enough to see is big
+enough to hold the contact closed. There is no window.
+
+So the lead is tested by asking — close the relay, wait, look, restore it — and
+only when the answer matters (the charger arriving, or someone pressing the test
+button). Never on a timer: the contact sits on the camera's ignition line, so a
+fifteen-minute poll would wake the camera 96 times a day for no reason.
+
+**What the machine now carries:** the relay, and nothing else. No standing load.
+
+---
+
+<details>
+<summary><strong>Historical: the MOSFET arrangement, until 2026-09-12</strong></summary>
+
+Kept because it ran for six months and the wiring may still be recognisable in
+photographs. Removed on 2026-09-12: the controller, the IRFP9140N, its 10 K
+pull-up and the 100 Ω gate resistor. The 1N4007 and the camera's own three wires
+stayed exactly where they were.
+
+**Note on the table below:** the "K7 Power — No power / Powered" column is
+mislabelled. The MOSFET drove the YELLOW *ignition sense* line; the camera's DC
+supply was the RED wire and was never switched. The error is left visible rather
+than silently corrected, because a public copy of this drawing showed the drain
+going to "K7 DC power input (+)" and anyone who built from it has the camera's
+main supply running through a TO-247 that was never meant to carry it.
 
 #### MOSFET Circuit (IRFP9140N — P-channel, TO-247)
 
@@ -446,6 +520,8 @@ The Shelly relay drives an IRFP9140N P-channel MOSFET as a high-side switch. Thi
              Drain
 ```
 
+</details>
+
 #### Wiring Tips
 
 - **Heat-shrink** the MOSFET + resistors assembly and zip-tie to the wiring harness
@@ -517,11 +593,10 @@ profile cannot correct both ends accurately.
 |-----------|--------------|---------|
 | `CHARGER_ON_V` (JS rule) | **13.0 V** | Charger detection — voltage must rise above this to start CHARGING |
 | `CHARGER_OFF_V` (JS rule) | **12.7 V** | Charger removal — voltage must drop below this to confirm charger disconnected |
-| `chargerOnVoltage` (Shelly failsafe) | **13.0 V** | Same ON threshold on-device |
-| `chargerOffVoltage` (Shelly failsafe) | **12.7 V** | Same OFF threshold on-device |
 | `LOW_BATT_V` (JS rule) | **12.0 V** | Emergency low battery cutoff |
-| `lowBattVoltage` (Shelly failsafe) | **11.5 V** | Emergency cutoff (on-device) |
 
+> **The on-device failsafe no longer has voltage thresholds at all** (rewritten 2026-09-12); the rows that listed them have been removed rather than corrected. The thresholds below belong to the openHAB rule only.
+>
 > **Note:** Voltage thresholds are FALLBACK only. When BLE is online, charger detection
 > uses BLE charge state as the primary authority. Voltage-only detection is suppressed
 > by the 5-minute grace period after re-arm to prevent false triggers.
@@ -570,13 +645,19 @@ Debounce reduced from 30s to 5s after diode installation — verified working, n
 
 ### 6. Failsafe Script (on-device)
 
-The failsafe script runs directly on the Shelly (mJS engine), providing basic K7 power control when openHAB is unreachable:
+The failsafe runs directly on the controller (mJS engine). **Rewritten on
+2026-09-12** — it has no voltage thresholds any more, because the ADC no longer
+measures a battery.
 
 - **Script ID**: 1 ("K7 Failsafe")
-- **Status**: enabled, running
-- **Upload**: Via Shelly RPC (`Script.PutCode`) — all non-ASCII characters must be stripped before upload
+- **Upload**: via RPC (`Script.PutCode`) — strip all non-ASCII first or the
+  device returns 500
+- **What it does**: opens the relay if openHAB stops writing its heartbeat, and
+  enforces an absolute ceiling on relay-ON time
 
-The failsafe yields to openHAB `sendCommand()` when LAN control is available.
+It is a dead-man's handle and nothing more. See
+[Failsafe script](#failsafe-script-on-device-detail) below for why the previous
+version could not survive the move.
 
 ### 7. Verify
 
@@ -690,33 +771,60 @@ These are reported by the Pi dump service via REST API (not modified):
 | `error: ...` | Various error conditions |
 | `offline` | Service stopped |
 
-## Shelly Failsafe Script
+## Failsafe script (on-device detail)
 
-The local failsafe (`innovv-k7/shelly-failsafe-script.js`) runs on the Shelly's mJS engine:
+Source of truth: `shelly-scripts/k7-failsafe.js`. The copy on the device is a
+deployment, not a master.
+
+### What it does now
 
 | Parameter | Value | Purpose |
-|-----------|-------|---------|
-| Check interval | 30s | ADC polling frequency |
-| Charger ON threshold | 13.0V (raw) | Detect charger connecting (matches JS rule) |
-| Charger OFF threshold | 12.7V (raw) | Confirm charger removed |
-| Stabilisation | 3 checks (90s) | Confirm charger is stable |
-| Max ON time (auto) | 25 min | Shorter than openHAB's 30 min — so openHAB timer takes priority |
-| Max ON time (manual) | 60 min | External relay toggle (Shelly app/cloud/physical) |
-| Low battery cutoff | 11.5V | Emergency protection — applies in ALL modes |
-| Voltmeter ID | 100 | Peripheral added via `Uni.AddPeripheral` |
+|---|---|---|
+| Heartbeat key | `oh_heartbeat` | openHAB writes a changing value into the device's key-value store on every poll |
+| Heartbeat timeout | **300 s** | Ten missed writes. Relay opens if the value stops changing |
+| Check interval | 60 s | How often the script looks |
+| Absolute ceiling | **45 min** | Above openHAB's own 30 min, so it only catches what openHAB missed |
+| Voltage thresholds | **none** | Deliberately. See below |
 
-The failsafe has a **shorter auto timeout** (25 min vs 30 min) so openHAB's safety timer takes priority if both are running.
+The script never compares the two clocks. It stores the last value it saw and the
+time *it* saw that value change, both by its own clock. openHAB's clock and the
+device's may disagree by minutes after a reboot, and a heartbeat that depends on
+them agreeing is a heartbeat that fails at 3 a.m.
 
-### Manual Mode Detection (v4 — 2026-03-15)
+### Why the previous version had to go
 
-The failsafe detects external relay toggles (Shelly app, cloud, API, physical button) via a `Shelly.addStatusHandler()` callback. When relay ON is detected from a source other than the script's own `relayControl()`:
+It read the ADC and made decisions from it: charger detected above 14.0 V,
+charger gone below 13.0 V, emergency cut-off below 12.0 V. That worked while the
+controller sat on the motorcycle with its ADC across the battery.
 
-- Sets `isManualOn = true`
-- Starts 60-minute safety timer (generous for browsing K7 footage via WiFi)
-- **Skips charger-removal voltage shutoff** (no charger present when riding/stopped away from home — battery ~12.5V would trigger the 12.7V threshold within 30s)
-- Low battery cutoff (< 11.5V) still applies regardless
+The ADC moved to the garage with everything else. It now reads the drop across a
+100 Ω resistor in the relay coil's return leg: 0.000 V open, about 0.86 V
+energised. **Both are below 12, so the emergency cut-off fired on every check,
+every 30 seconds, for ever.** Measured on the bench: the relay was commanded on,
+held about twenty seconds, and switched off by the script — with openHAB's own
+rule removed, so nothing else could have done it.
 
-This covers the edge case where the user toggles the relay via the Shelly app through their phone hotspot (STA1) when openHAB is unreachable — e.g., stopped on a ride wanting to browse footage. Without this, the relay would stay ON indefinitely since openHAB Rule 7 (Manual Override) never fires.
+### And why the rewrite was read before it was switched on
+
+The first rewrite was a dead-man's handle whose comment said openHAB pets it on
+every poll. It did not. The pet was a status handler on the relay, and a status
+handler fires on **change**. openHAB's poll is a status **read**, which changes
+nothing and raises no event.
+
+So the only pet was the relay closing. Relay closes, one event, silence — and
+fifteen minutes later the script would declare openHAB dead and open the relay,
+in the middle of a healthy dump, with openHAB polling happily throughout. **Every
+dump longer than the heartbeat timeout would have been cut in half, and the fault
+would have looked exactly like a hardware problem.**
+
+Caught by reading it before enabling it, 2026-09-12. Never ran in production.
+The heartbeat is now an explicit write that cannot happen as a side effect.
+
+### The failsafe that needs no code
+
+The controller is on mains now. A power cut in the garage drops it, which
+releases the coil, which opens the contact and lets the camera sleep. That
+protection did not exist while the controller ran from the machine's own battery.
 
 ## Test Results (2026-03-12)
 

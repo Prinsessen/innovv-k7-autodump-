@@ -1,21 +1,56 @@
 // =============================================================================
-// Motorcycle K7 Auto-Power — Shelly Plus Uni + IRFP9140N MOSFET
+// Motorcycle K7 Auto-Power — Shelly Plus Uni (garage) + Omron G6S-2 (machine)
 // =============================================================================
-// Shelly Plus Uni controls K7 dashcam power via IRFP9140N P-channel MOSFET.
-// Relay drives MOSFET gate; 10K pull-up ensures fail-safe OFF.
-// Flow: Charger detected -> Relay ON -> MOSFET ON -> K7 powers up ->
-//       Pi dumps footage -> Dump complete -> Relay OFF -> K7 shuts down.
+// REBUILT 2026-09-12. The Shelly moved off the motorcycle and into the garage.
+// Anything you remember about a MOSFET on the bike is gone — see the block at
+// the end of this header for what it looked like.
+//
+// What is switched: the K7's YELLOW wire, an ignition SENSE input. The camera's
+// RED wire is permanent 12 V straight from the battery and is never switched.
+// Nothing in this project has ever switched the camera's power.
+//
+// Flow: Charger detected AND garage lead connected -> Shelly relay closes ->
+//       G6S-2 coil energises -> its contact drives K7 YELLOW -> camera wakes ->
+//       Pi dumps footage -> Dump complete -> relay opens -> camera sleeps.
 //
 // Physical wiring:
-//   - Shelly powered from always-on motorcycle battery circuit (fused 3A)
-//   - Shelly relay output -> IRFP9140N gate (via 100 ohm) + 10K pull-up
-//   - IRFP9140N Source: battery +12V, Drain: K7 DC+ input
-//   - Shelly ADC (Voltmeter:100) -> motorcycle battery (voltage sensing)
+//   GARAGE    - Shelly on mains; 12 V PSU
+//             - PSU(+) -> relay COM;  relay NO -> lead core 1
+//             - lead core 2 -> 100 ohm -> PSU(-)
+//             - Shelly ADC (Voltmeter:100) taps the COIL SIDE of the 100 ohm
+//   LEAD      - 2 x 0.5 mm2, cores numbered 1 and 2, Deutsch DTM 2-way
+//   MACHINE   - G6S-2 DPDT, 1 kOhm 12 V coil. DTM 1 -> coil + (relay pin 12),
+//               DTM 2 -> coil - (relay pin 1)
+//             - contact pin 9 (COM) <- battery +12 V fused; pin 8 (NO) -> K7
+//               YELLOW, via the existing 1N4007 from the ignition circuit
 //
-// ADC Calibration (2026-03-11):
-//   Fluke 175 reference: 13.13V, Shelly raw ADC: 12.86V → offset +0.27V
-//   Applied in JS poller (+0.27V added to raw Shelly API reading).
-//   Re-calibrate if Shelly firmware changes or wiring is modified.
+// The ADC no longer measures a battery. It measures coil current:
+//   lead connected, coil energised   0.850 - 0.880 V
+//   lead unplugged, or coil open     0.000 V
+// Battery voltage now comes from Vehicle10_Power (the FMM920 tracker), which
+// agreed with the old ADC reading to 4 mV when both were live on 2026-09-08.
+//
+// The 0.27 V ADC offset is NOT applied any more. It was a battery-voltage
+// calibration; against a 0.86 V coil signal it has no meaning. It survives only
+// as the reason the ADC's noise floor clamps anything under 0.27 V to zero.
+//
+// The lead cannot be sensed passively — the resistor only carries current when
+// the coil is energised, so an open relay reads 0.000 V whether the lead is in
+// or out. See vehicle-motorcycle-k7-lead.js, which probes instead of polling.
+//
+// WHAT THIS REPLACED (until 2026-09-12)
+//   The Shelly sat on the motorcycle, fed from its battery, drawing 80-110 mA
+//   around the clock. Its relay pulled an IRFP9140N P-channel MOSFET gate to
+//   ground through 100 ohm, against a 10K pull-up that held the MOSFET off
+//   whenever the Shelly was unpowered. The MOSFET drain drove K7 YELLOW.
+//   Its ADC read the battery directly, which is what made voltage-threshold
+//   charger detection possible at the time.
+//
+//   Removed: the Shelly from the bike, the IRFP9140N, the 10K and the gate
+//   resistor. Kept: the 1N4007, and the camera's own three wires.
+//
+//   Some older copies of the documentation drew the MOSFET drain going to the
+//   K7's DC power input. That was never true of this installation.
 //
 // Device: shellyplusuni-a1b2c3d4e5f6  IP: 192.168.1.62  FW: 1.7.4
 // Thing:  shelly:shellyplusuni:a1b2c3d4e5f6
@@ -45,7 +80,7 @@ Number   MC_K7_Shelly_Voltage       "Coil sense, legacy name [%.3f V]"          
 // So it is answered by ASKING: energise the coil, wait, look. See
 // vehicle-motorcycle-k7-lead.js. UNDEF until the first probe, which is honest:
 // unknown is not the same as disconnected.
-Switch   MC_K7_Lead_Connected       "Garage lead [MAP(k7_onoff.map):%s]"             <k7-relay-blue>        (gMC_K7_Power) ["Status"]
+Switch   MC_K7_Lead_Connected       "Garage lead [MAP(k7_lead.map):%s]"               <k7-relay-blue>        (gMC_K7_Power) ["Status"]
 // Ask right now whether the lead is connected.
 //
 // It exists because the honest answer to "shouldn't I see it change when I move

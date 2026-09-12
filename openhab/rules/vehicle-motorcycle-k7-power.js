@@ -759,12 +759,14 @@ rules.JSRule({
 });
 
 // Rule 2: Ignition Handler (debounced)
-// With 1N4007 diode installed (2026-03-12), MOSFET back-feed to FMM920 is
-// physically blocked. A short 5s debounce remains for generic ignition noise.
+// With the 1N4007 installed (2026-03-12), back-feed from the switched ignition
+// line into the FMM920 is physically blocked. A short 5s debounce remains for
+// generic ignition noise. The diode stayed through the 2026-09-12 rebuild; only
+// what drives the line changed (MOSFET on the bike -> G6S-2 contact).
 // Real riding keeps ignition ON for minutes.
 rules.JSRule({
   name: 'K7 Power - Ignition Handler',
-  description: 'Handles ignition ON/OFF with 5s debounce (diode blocks MOSFET back-feed)',
+  description: 'Handles ignition ON/OFF with 5s debounce (diode blocks back-feed)',
   triggers: [triggers.ItemStateChangeTrigger('Vehicle10_Ignition')],
   execute: function () {
     try {
@@ -788,7 +790,7 @@ rules.JSRule({
             if (currentState === STATES.DUMP_DONE) {
               console.info(LOG + ': Ignition ON in DUMP_DONE \u2014 dump already complete, allowing ride');
             }
-            // MOSFET back-feed check removed 2026-03-12: 1N4007 diode physically blocks it.
+            // Back-feed check removed 2026-03-12: the 1N4007 physically blocks it.
             // If ignition is ON during TRANSFERRING/COOLDOWN with relay ON, it's real ignition.
             if (currentState === STATES.CHARGING) {
               console.info(LOG + ': Real ignition during CHARGING - cancelling charger sequence');
@@ -1021,7 +1023,7 @@ rules.JSRule({
       // is how a value starts flickering between two meanings.
 
 
-      // --- Relay state sync (switch:0 = K7 MOSFET relay) ---
+      // --- Relay state sync (switch:0 = the relay feeding the G6S-2 coil) ---
       if (data['switch:0']) {
         var relayOn = data['switch:0'].output;
         var relayItem = items.getItem('MC_K7_Relay');
@@ -1066,6 +1068,22 @@ rules.JSRule({
       items.getItem('MC_K7_Shelly_Heartbeat').postUpdate(
         time.ZonedDateTime.now().format(time.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
       );
+
+      // --- Heartbeat to the device itself (feeds the on-board failsafe) ---
+      // shelly-scripts/k7-failsafe.js opens the relay if this value stops
+      // changing. It must be written HERE, inside the success path of the poll,
+      // and only after Shelly.GetStatus has actually returned: the whole point
+      // is that it proves this rule is running and reaching the device.
+      //
+      // Do not replace this with anything the Shelly can observe by itself. The
+      // failsafe's previous version inferred the heartbeat from relay status
+      // events, which meant a healthy openHAB that changed nothing looked
+      // identical to a dead one, and it would have cut every dump at 15 minutes.
+      //
+      // The value is only ever compared with its own previous value, so it need
+      // not be a time — it needs to be different each poll, and nothing more.
+      http.sendHttpGetRequest('http://' + SHELLY_IP + '/rpc/KVS.Set?key=oh_heartbeat&value=' +
+        time.ZonedDateTime.now().toInstant().toEpochMilli(), 5000);
 
     } catch (e) {
       console.debug(LOG + ': Shelly poll error: ' + e.message);
@@ -1356,6 +1374,51 @@ rules.JSRule({
   }
 });
 
+// =============================================================================
+// Rule 14: Lead Disconnected — the gate, closed on the way out as well
+//
+// The gate in startChargerSequence() refuses to START a dump without the lead.
+// On its own that is only half the requirement: nothing stopped a dump that was
+// already running when the lead was pulled, so the machine carried on believing
+// it was transferring to a camera it had stopped being connected to.
+//
+// Observed on the bench, 2026-09-12: lead pulled at 12:32:00 during TRANSFERRING.
+// The passive sense caught it within ten seconds and published OFF. The state
+// machine did not notice, held the relay closed, and would have sat there until
+// the max-on timeout.
+//
+// Losing the lead mid-transfer is not a fault and raises no alarm — unplugging
+// is an ordinary thing to do. It simply ends the attempt: relay off, back to
+// PARKED, and plugging in again starts a fresh sequence through Rule 13.
+// =============================================================================
+rules.JSRule({
+  name: 'K7 Power - Lead Disconnected',
+  description: 'Abort an in-flight charger sequence when the garage lead is pulled',
+  triggers: [triggers.ItemStateChangeTrigger('MC_K7_Lead_Connected', 'ON', 'OFF')],
+  execute: function () {
+    try {
+      var currentState = getState();
+      if (currentState !== STATES.CHARGING && currentState !== STATES.TRANSFERRING) return;
+
+      // Cancel whichever leg of the sequence is in flight. During CHARGING that
+      // is the stabilisation wait; during TRANSFERRING it is the max-on guard.
+      cancelTimer('stabTimer');
+      cancelTimer('maxOnTimer');
+
+      console.warn(LOG + ': Garage lead disconnected during ' + currentState
+        + ' \u2014 aborting, relay OFF');
+      if (currentState === STATES.TRANSFERRING) {
+        relayOff('Garage lead disconnected');
+      }
+      rearmToParked('Garage lead disconnected \u2014 dump aborted');
+      items.getItem('MC_K7_Power_Reason').postUpdate(
+        'Lead disconnected during ' + currentState + ' \u2014 dump aborted');
+    } catch (e) {
+      console.error(LOG + ': Lead-disconnected handler error: ' + e.message);
+    }
+  }
+});
+
 // Rule 11: Relay Safety Watchdog (cron)
 // Periodically verifies relay state is consistent with state machine.
 // Catches relay self-ON events that may be missed by event-driven rules
@@ -1438,6 +1501,24 @@ rules.JSRule({
         rearmToParked('WATCHDOG: drain guard \u2014 clamps off bike');
         items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: clamps off bike in ' + currentState + ' \u2014 forced OFF (drain guard)');
         sendWatchdogAlert('drain guard \u2014 clamps NOT on bike in ' + currentState, currentState);
+        return;
+      }
+
+      // GUARD 4 \u2014 lead guard. Relay ON in an active state with the garage
+      // lead not connected. Rule 14 aborts this on the event, so reaching here
+      // means the event was missed \u2014 a rules reload mid-transfer, or a state
+      // change that arrived while the Shelly was unreachable. Harmless in itself
+      // (no lead means no coil current and no camera), but it leaves the machine
+      // claiming to transfer footage that is going nowhere, so end it.
+      //
+      // Reads the item, not the ADC: an unreachable Shelly leaves the lead state
+      // unchanged rather than false, so a network blip cannot abort a good dump.
+      if ((currentState === STATES.TRANSFERRING || currentState === STATES.CHARGING) && !leadConnected()) {
+        console.warn(LOG + ': WATCHDOG: Relay ON in ' + currentState + ' but garage lead NOT connected \u2014 forcing OFF');
+        relayOff('WATCHDOG: lead guard \u2014 no garage lead in ' + currentState);
+        rearmToParked('WATCHDOG: lead guard \u2014 no garage lead');
+        items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: garage lead not connected in ' + currentState + ' \u2014 forced OFF');
+        sendWatchdogAlert('lead guard \u2014 garage lead NOT connected in ' + currentState, currentState);
         return;
       }
     } catch (e) {

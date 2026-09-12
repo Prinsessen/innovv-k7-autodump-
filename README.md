@@ -1,14 +1,23 @@
 # innovv-k7-autodump
 
-Automated INNOVV K7 dashcam footage backup via Shelly Plus Uni, IRFP9140N MOSFET power switching, and openHAB — triggered by **dual-sensor charger detection** (Victron BLE + voltage fallback) on motorcycle.
+Automated INNOVV K7 dashcam footage backup, triggered by **dual-sensor charger detection** (Victron BLE, with a battery-voltage fallback) when the motorcycle goes on charge.
+
+A controller in the garage closes a relay on the machine, which tells the camera
+to wake. The camera joins its own WiFi, a Raspberry Pi pulls the new footage to a
+NAS and verifies every file, and the relay opens again.
+
+> **Rebuilt on 2026-09-12.** The controller used to live on the motorcycle and
+> drive a MOSFET; it now sits in the garage on mains and drives a signal relay
+> down a two-core lead. See [Switching circuit](#switching-circuit). The chief
+> gain is that the machine carries no standing load at all.
 
 ## What It Does
 
 When you plug in your motorcycle battery charger:
 
-1. **Victron BLE daemon** (on Pi 3) detects charger is actively charging via BLE GATT — or **Shelly ADC** detects high voltage (>13.0V) as fallback
-2. **openHAB state machine** (10 JSRules) confirms charger presence with 60s stabilisation
-3. **Relay turns ON** → IRFP9140N MOSFET switches 12V to the K7 dashcam
+1. **Victron BLE daemon** (on the Pi) detects the charger is actively charging via BLE GATT — with the GPS tracker's battery voltage as fallback
+2. **openHAB state machine** confirms the charger, and that the garage lead is plugged in, with 60 s stabilisation
+3. **Relay closes** → the signal relay on the machine drives the K7's ignition line
 4. **K7 boots up** and broadcasts its WiFi access point
 5. **Raspberry Pi 3** detects the K7 WiFi, connects, and downloads all new footage to NAS
 6. Every file is **SHA-256 verified** (download hash + NAS read-back) before deletion from K7
@@ -39,19 +48,19 @@ No manual intervention. Footage is automatically backed up whenever you charge.
                                           │
                                           ▼ Shelly Binding
                               ┌───────────────────────────┐
-                              │  Shelly Plus Uni           │
-                              │  ADC: battery voltage      │
-                              │  Relay: MOSFET gate drive  │
-                              │  Script: local failsafe    │
+                              │  Shelly Plus Uni (garage)  │
+                              │  ADC: coil sense current   │
+                              │  Relay: feeds the coil     │
+                              │  Script: heartbeat failsafe│
                               └───────────┬────────────────┘
                                           │
-                                          ▼ Relay drives MOSFET gate
+                                          ▼ two-core lead, ~12 mA
                               ┌───────────────────────────┐
-                              │  IRFP9140N P-ch MOSFET    │
-                              │  High-side switch          │
-                              │  10K pull-up (fail-safe)   │
+                              │  G6S-2 relay (on machine)  │
+                              │  Contact on K7 YELLOW      │
+                              │  Coil release = fail-safe  │
                               └───────────┬────────────────┘
-                                          │ Switched 12V
+                                          │ Ignition signal
                                           ▼
                               ┌───────────────────────────┐
                               │  INNOVV K7 Dashcam         │
@@ -105,50 +114,154 @@ Gated by `isHome()` (bike present via BLE beacon or GPS geofence) and a generato
 
 | Component | Model | Role |
 |-----------|-------|------|
-| Shelly Plus Uni | SNSN-0043X (Gen 2) | Relay control + ADC voltage sensing |
-| IRFP9140N | P-channel MOSFET, TO-247 | High-side power switch for K7 |
-| 10K resistor | 1/4W | Gate pull-up (fail-safe OFF) |
-| 100Ω resistor | 1/4W (optional) | Gate inrush limiter |
-| Blocking diode | 1N4007 (1A/1000V) | **INSTALLED** — Blocks MOSFET back-feed into ignition circuit |
+| Shelly Plus Uni | SNSN-0043X (Gen 2) | Relay control + ADC sensing. **In the garage, on mains** — not on the machine |
+| Signal relay | Omron `G6S-2 DC12` (DPDT, 1 kΩ coil) | On the machine. Drives the camera's ignition line; the coil is fed from the garage |
+| 100 Ω resistor | 1/4 W | Sense resistor in the coil's return leg — this is what makes the lead detectable |
+| Two-core lead | 2 × 0.5 mm², numbered cores | Garage to machine. Carries the coil current and reports that it is connected |
+| Connector pair | Deutsch DTM, 2-way | The interlock: unplugged means the dump cannot run |
+| Blocking diode | 1N4007 (1A/1000V) | **INSTALLED** — blocks back-feed from the switched ignition line into the ignition circuit |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video |
 | Raspberry Pi 3 | Any RAM variant | Runs dump service + BLE monitor |
 | Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Primary charger detection via BLE |
 | ALFA AWUS036ACM | MT7612U, AC1200, USB 3.0 | 5GHz WiFi to K7 AP |
 | GPS tracker | e.g. Teltonika FMM920 (optional) | Ignition state for state machine |
 
-## MOSFET Circuit
+## Switching circuit
+
+> **Rebuilt on 2026-09-12.** The controller moved off the motorcycle and into the
+> garage. What it switches, and how, changed with it. The arrangement this
+> replaced is kept at the end of this section — it ran for six months and someone
+> may still be looking at one.
+
+### What is actually switched
+
+The camera has three wires, and only one of them is a control input:
+
+| K7 wire | What it is | Fed from |
+|---|---|---|
+| **RED** | Permanent 12 V | Battery, direct. **Always live, never switched.** |
+| **BLACK** | Ground | Battery ground |
+| **YELLOW** | Ignition — a **sense input**, telling the camera when to run | The switching element |
+
+**Nothing in this project has ever switched the camera's power.** It switches the
+ignition signal, and the camera's own permanent feed stays connected throughout.
+That distinction is easy to lose and expensive to get wrong: route the camera's
+main supply through a small switching element and you have both under-rated it
+and removed the permanent feed the camera needs to shut down cleanly.
+
+### The arrangement now
+
+A signal relay on the machine, with its coil fed from the garage down a two-core
+lead. The controller never touches the motorcycle's wiring directly.
+
+```
+  GARAGE                                        |  MOTORCYCLE
+                                                |
+  12 V PSU (+) ---- relay COM                   |
+                    relay NO  ------- core 1 ---+--- coil +  \
+                                                |             ) signal relay
+  12 V PSU (-) ---- 100 ohm ------- core 2 -----+--- coil -  /   (DPDT, 12 V)
+                        |                       |
+       controller ADC --+                       |   contact COM <-- battery +12 V (fused)
+       (reads the coil current)                 |   contact NO  --> K7 YELLOW
+                                                |                   (via the existing
+                                                |                    1N4007 from ignition)
+```
+
+- The controller switches the **high** side; the return runs through the sense
+  resistor, so the same two wires carry the coil current and report that they are
+  connected.
+- Coil energised: about **12 mA** through a **1 kOhm** coil, developing roughly
+  **0.86 V** across the 100 Ohm as the ADC reads it.
+- Lead unplugged: no circuit, and the ADC reads **0.000 V**.
+
+### Why the lead can be sensed but not polled
+
+The sense resistor sits in the coil's return leg, so it only carries current
+while the coil is energised. With the relay open the ADC reads zero whether the
+lead is plugged in or lying on the bench — *no circuit* and *no connection* are
+the same measurement.
+
+So the lead is tested by **asking**: close the relay, wait, look, and open it
+again if the answer was no. It cannot be done passively, and the arithmetic says
+why. The ADC needs about 0.27 V across the 100 Ohm to read anything at all, which
+is 2.7 mA, which is 2.7 V across a 1 kOhm coil — and a signal relay of this type
+is only guaranteed to **release** below 1.2 V. Any sense current large enough to
+see is large enough to hold the contact closed. There is no window.
+
+The probe is therefore tied to the moment the answer matters — the charger
+arriving, or someone asking — and never to a timer. The relay contact sits on the
+camera's ignition line, so a fifteen-minute poll would wake the camera ninety-six
+times a day to answer a question nobody had asked.
+
+### Fail-safe behaviour
+
+| Event | What happens | Why |
+|---|---|---|
+| Garage loses power | Controller drops, coil releases, contact opens, camera sleeps | Free. No code involved |
+| Lead unplugged | No coil current, contact opens | The connector is the interlock |
+| Controller hangs with the relay closed | On-board script opens it when the heartbeat stops | See the failsafe script |
+| Dump running when the lead is pulled | Detected within ten seconds, sequence aborted | Added 2026-09-12 |
+
+The first of those did not exist in the previous arrangement, where the
+controller ran from the motorcycle's own battery. Mains power made it free.
+
+### Parasitic draw on the motorcycle
+
+**None at rest.** The only thing left on the machine is the relay, and its coil
+draws ~12 mA solely while energised. The previous arrangement left a controller
+on the machine drawing 80–110 mA continuously, which was the single largest item
+in the power budget.
+
+---
+
+<details>
+<summary><strong>Historical: the MOSFET arrangement, until 2026-09-12</strong></summary>
+
+The controller lived on the motorcycle and drove a P-channel MOSFET as a
+high-side switch on the ignition-sense line. Its ADC read the machine's battery
+voltage directly, which is what made voltage-threshold charger detection possible
+at the time.
 
 ```
   Battery +12V (always-on, fused 3A)
-     │
-     ├──────── Shelly Plus Uni POWER
-     ├──────── Shelly ADC input (Voltmeter:100)
-     │
-     ├── IRFP9140N Source (pin 3)
-     │       │
-     │     10K resistor (pull-up: fail-safe MOSFET OFF)
-     │       │
-     │   IRFP9140N Gate (pin 1) ── 100Ω ── Shelly Relay COM
-     │                                            │
-     │                          Shelly Relay NO ──┤
-     │                                            │
-     │                                       Battery GND
-     │
-     └── IRFP9140N Drain (pin 2) ──────────┐
-                                          ├──> K7 DC power input (+)
-  Motorcycle ignition 12V ──►|── 1N4007 ──┘
-                            (1N4007: anode=ignition, cathode=splice)
-                            (Blocks MOSFET back-feed to ignition circuit)
-
-  Battery GND ─────────────────────> K7 DC power input (-)
+     |
+     +-------- Controller POWER
+     +-------- Controller ADC input
+     |
+     +-- IRFP9140N Source (pin 3)
+     |       |
+     |     10K resistor (pull-up: fail-safe MOSFET OFF)
+     |       |
+     |   IRFP9140N Gate (pin 1) -- 100 ohm -- Relay COM
+     |                                            |
+     |                             Relay NO ------+
+     |                                            |
+     |                                       Battery GND
+     |
+     +-- IRFP9140N Drain (pin 2) ----------+
+                                           +--> K7 YELLOW (ignition sense)
+  Motorcycle ignition 12V --->|-- 1N4007 --+
+                            (anode=ignition, cathode=splice)
 ```
 
-| Relay State | Vgs | MOSFET | K7 Power |
-|-------------|-----|--------|----------|
-| **OPEN** (OFF) | 0V | OFF | No power |
-| **CLOSED** (ON) | -12V | Fully ON | Powered |
+| Relay | Vgs | MOSFET | K7 ignition line |
+|---|---|---|---|
+| **OPEN** | 0 V | OFF | Not driven — camera sleeps |
+| **CLOSED** | −12 V | ON | Driven to 12 V — camera runs |
 
-**Fail-safe:** If Shelly loses power, relay opens, 10K pull-up holds gate high, MOSFET stays OFF. K7 stays off. Battery is safe.
+**An earlier version of this README drew the MOSFET drain going to "K7 DC power
+input (+)" and labelled the table "K7 Power: No power / Powered".** That was
+wrong for the whole life of the circuit. The drain went to the YELLOW ignition
+sense wire; the camera's DC supply was the RED wire, permanently connected. The
+error is recorded rather than quietly deleted because anyone who built from that
+drawing has the camera's main supply running through a TO-247 that was never
+meant to carry it.
+
+Removed on 2026-09-12: the controller, the IRFP9140N, its 10K pull-up and the
+100 Ohm gate resistor. The 1N4007 and the camera's own three wires stayed.
+
+</details>
 
 ## Repository Structure
 
@@ -191,11 +304,30 @@ innovv-k7-autodump/
 
 ## Quick Start
 
-### 1. Wire the MOSFET Circuit
+### 1. Wire the switching circuit
 
-See the circuit diagram above. Solder the IRFP9140N + 10K pull-up + optional 100Ω gate resistor. Heat-shrink the assembly.
+See the circuit diagram above. Two halves:
 
-**Install the 1N4007 diode** in the ignition wire before the splice point to prevent MOSFET back-feed to the GPS tracker. (Anode on ignition side, cathode on K7/MOSFET splice.)
+**On the machine.** Mount the signal relay. Coil **+** and coil **−** go to the
+two cores of the lead; the contact switches battery +12 V onto the camera's
+**YELLOW** ignition wire. The camera's RED and BLACK stay exactly as they are —
+its supply is permanent and is not part of this circuit.
+
+**In the garage.** Controller relay COM to the 12 V PSU **+**, relay NO to core 1.
+Core 2 returns through the **100 Ω** to PSU **−**, and the ADC input taps the
+**coil side** of that resistor.
+
+> The ADC must sit between the coil and the resistor, not between the resistor
+> and PSU −. On the wrong side it shares a node with the supply return and can
+> only ever read zero — a mistake that survived one drawing and got built.
+
+**Install the 1N4007 diode** in the ignition wire before the splice point so the
+switched line cannot back-feed the ignition circuit or the GPS tracker. (Anode on
+the ignition side, cathode on the splice.)
+
+**Settle the coil polarity on the bench**, before anything is soldered: 12 V
+across the coil one way, listen; reverse it, listen again. Thirty seconds, and
+worth more than a datasheet citation.
 
 ### 2. Set Up the Victron BLE Monitor
 
@@ -295,9 +427,10 @@ cp openhab/transform/*.map  /etc/openhab/transform/
 | Media header validation | Every file | MP4 ftyp / JPEG magic bytes checked |
 | NAS space check | Every 10 files | Stops if < 10 GB free |
 | 3-failure abort | Consecutive | Stops if K7 goes offline mid-cycle |
-| MOSFET fail-safe | Physical | 10K pull-up ensures OFF when Shelly is unpowered |
-| Local failsafe script | On Shelly | Basic power control when openHAB is unreachable |
-| Manual mode safety | 60 min timeout | Shelly detects external relay toggle, 60-min safety timer |
+| Coil-release fail-safe | Physical | Lose garage power, or unplug the lead, and the contact opens by itself |
+| Lead interlock | Precondition | The dump cannot start unless the lead is proven connected, and aborts within 10 s if it is pulled |
+| Local failsafe script | On the controller | Opens the relay if openHAB stops writing its heartbeat |
+| Absolute ceiling | 45 min | Enforced on the device, independent of openHAB |
 
 ## Verified Transfer Pipeline
 
@@ -334,7 +467,7 @@ Copy `pi-software/config.example.json` to `config.json` and edit:
 ## Documentation
 
 - [Pi Software README](pi-software/README.md) — Detailed Pi setup, K7 API details, NAS structure, monitoring
-- [Auto-Power Documentation](docs/K7_AUTO_POWER_README.md) — MOSFET circuit, dual-sensor BLE integration, state machine, all 10 rules
+- [Auto-Power Documentation](docs/K7_AUTO_POWER_README.md) — switching circuit, dual-sensor BLE integration, state machine, all rules
 - [K7 Firmware Analysis](docs/FIRMWARE_ANALYSIS.md) — Reverse engineering of the K7 firmware (Novatek NA51055, RTL8821CS WiFi, CarDV HTTP API)
 - [Novatek NT9666x WiFi Command User Guide](docs/NT9666x-WiFi-Command-User-Guide.pdf) — Official Novatek CarDV HTTP API reference (the `cmd=NNNN` commands used by this project, e.g. 3017 free space, 3024 card status)
 - [Victron BLE Monitor](https://github.com/Prinsessen/victron-ble-openhab) — Standalone BLE daemon for the Victron charger

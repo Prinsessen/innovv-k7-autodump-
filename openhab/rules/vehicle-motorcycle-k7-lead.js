@@ -126,10 +126,19 @@ function probe(why) {
 // =============================================================================
 // 1. Passive read — while the relay is closed, the sense voltage is live
 // =============================================================================
+// Every ten seconds, not every minute, and the reason is which failure this
+// catches. While the coil is energised the camera has been told to wake and a
+// transfer may be running — losing the lead there is the case that actually
+// hurts, because the camera simply stops being told anything and the state
+// machine carries on believing it is transferring.
+//
+// It costs nothing. There is no coil to pull and no camera to disturb: the
+// current is already flowing and this only reads a number that is already there.
+// A minute was the first value written, chosen for no reason at all.
 rules.JSRule({
   name: 'K7 Lead - Passive Sense',
   description: 'While the coil is energised the sense voltage is a free live reading',
-  triggers: [triggers.GenericCronTrigger('0 * * * * ?')],
+  triggers: [triggers.GenericCronTrigger('0/10 * * * * ?')],
   execute: function () {
     safeExecute(LOG + ' passive', function () {
       if (relayIsOn() !== true) return;   // nothing to read with the coil open
