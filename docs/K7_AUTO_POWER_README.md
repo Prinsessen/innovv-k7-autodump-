@@ -1,5 +1,38 @@
 # INNOVV K7 Auto-Power — Shelly Plus Uni Integration
 
+> ## ⚠️ Architecture changed on 2026-09-12 — read this first
+>
+> The Shelly moved **off the motorcycle and into the garage**, and most of what
+> follows describes the arrangement before that.
+>
+> | | Before | Now |
+> |---|---|---|
+> | Shelly location | On the machine, fed from its battery | **In the garage, on mains** |
+> | Switching element | IRFP9140N P-channel MOSFET on the bike | **Omron G6S-2 relay**, coil fed from the garage down a two-core lead |
+> | Shelly ADC measures | The machine's battery voltage | **Current through a 100 Ω sense resistor** in the relay coil's return |
+> | Battery voltage source | The Shelly ADC | The GPS tracker's reading of the same battery |
+> | Charger detection fallback | ADC voltage thresholds | **Gone.** Victron BLE is the only sensor |
+> | Parasitic draw on the machine | 80–110 mA for the Shelly | **Nothing.** Only the relay coil, and only while energised |
+> | New precondition | — | **The dump cannot start unless the garage lead is proven connected** |
+>
+> **Why the lead has to be probed rather than watched:** the sense resistor sits
+> in the coil's return leg and carries current only while the coil is energised.
+> With the relay resting open, lead-in and lead-out are the same zero. A
+> permanent sense current large enough for the ADC to see — 0.27 V across
+> 100 Ω, so 2.7 mA, so 2.7 V across a 1 kΩ coil — is also large enough to hold
+> a G6S-2 closed, which is only guaranteed to release below 1.2 V. There is no
+> window, so the answer is obtained by asking: close the relay, wait, look, and
+> put it back as it was found.
+>
+> Measured on the bench before any of it was written: **0.000 V** with the lead
+> out, **0.850–0.880 V** with it in, transition inside one sample either way.
+>
+> The sections below still describe the MOSFET arrangement in the diagrams,
+> wiring and troubleshooting. They are left rather than half-corrected: a diagram
+> edited in a hurry is harder to spot as wrong than one plainly labelled
+> historical.
+
+
 Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel MOSFET, triggered by battery charger detection. When the Victron charger is connected, the system powers the K7 on, waits for the Pi dump service to finish downloading footage, then powers the K7 off.
 
 ## Architecture

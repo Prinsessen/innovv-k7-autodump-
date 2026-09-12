@@ -17,10 +17,73 @@
 //   Storage:     13.2V held, minimal current
 // =============================================================================
 const { rules, triggers, items, actions, time } = require('openhab');
+const notify = require('notification-config');
+const { buildEmail } = require('email-builder');
+const { getVehicleData } = require('motorcycle-helpers');
 
 const LOG = 'k7_power';
 const SHELLY_IP = '192.168.1.62';  // Shelly Plus Uni IP address
-const ADC_OFFSET = 0.27;        // ADC calibration offset (Fluke 175 ref 13.13V, Shelly raw 12.86V)
+
+// --- The battery sensor, after the 2026-09-12 migration ---------------------
+// The Shelly moved from the machine to the garage, and its ADC went with it. It
+// now measures current through the relay coil, not the battery it used to sit
+// across — see vehicle-motorcycle-k7-lead.js and MOTORCYCLE-POWER-BUDGET.md.
+//
+// Vehicle10_Power is the FMM920 tracker's reading of the same battery, and the
+// substitution needed no calibration: checked live on 2026-09-08 while both were
+// running, the ADC said 13.17 V and the tracker 13.174 V. Four millivolts apart.
+//
+// It was chosen over CanBus_Battery deliberately, and the reasoning is worth
+// keeping: the CAN board is the more accurate instrument but it only speaks
+// while the bus is alive. A low-battery emergency matters most when nothing is
+// talking, which is exactly the machine this is meant to catch. The tracker is
+// awake whenever the machine is.
+const BATTERY_ITEM = 'Vehicle10_Power';
+
+/**
+ * The machine's battery voltage, or null if nobody can say.
+ *
+ * Every voltage decision in this file goes through here. That is the point: the
+ * sensor moved once already, and the migration touched fourteen call sites
+ * because it had been read inline everywhere. One accessor means the next move
+ * is one line.
+ *
+ * Returns null rather than 0 when unavailable. Zero is a reading; null is the
+ * absence of one, and a low-battery guard that treats "no data" as "flat" would
+ * shut the camera down every time the tracker missed a report.
+ */
+/**
+ * Is the garage-to-machine lead plugged in?
+ *
+ * Owned by vehicle-motorcycle-k7-lead.js, which proves it by energising the coil
+ * and measuring across the sense resistor. This only reads the verdict.
+ *
+ * UNKNOWN COUNTS AS NOT CONNECTED, and that is the whole safety argument. The
+ * item is UNDEF until something has actually probed, and a dump started on an
+ * unverified lead is a dump that silently never happens while the state machine
+ * believes it is transferring. Refusing to start costs one charging session.
+ */
+function leadConnected() {
+  try {
+    const it = items.getItem('MC_K7_Lead_Connected');
+    if (it.isUninitialized) return false;
+    return it.state.toString() === 'ON';
+  } catch (e) {
+    return false;
+  }
+}
+
+function batteryVolts() {
+  try {
+    const it = items.getItem(BATTERY_ITEM);
+    if (it.isUninitialized) return null;
+    const v = parseFloat(it.state);
+    return isNaN(v) ? null : v;
+  } catch (e) {
+    console.warn(LOG + ': battery voltage unavailable — ' + (e.message || e));
+    return null;
+  }
+}
 // Voltage thresholds — FALLBACK only (used when BLE is unavailable)
 const CHARGER_ON_V  = 13.0;  // Voltage to DETECT charger (fallback)
 const CHARGER_OFF_V = 12.7;  // Voltage to CONFIRM charger removed (fallback)
@@ -44,14 +107,12 @@ const WATCHDOG_INTERVAL_S = 300;  // Relay watchdog every 5 minutes
 // Two independent home sources, combined with OR for maximum robustness:
 //   ESP_Springfield_Home  - the bike's own Shelly BLE beacon seen ONLY by the
 //                           garage ESP32 node (strongest signal, GPS-immune)
-//   Vehicle10_GeofenceName - Traccar GPS geofence name (backup if the Shelly
-//                           BLE fails to connect, which it sometimes does).
-//                           Set HOME_GEOFENCE_MATCH below to a substring of
-//                           YOUR home geofence name.
+//   Vehicle10_GeofenceName - Traccar GPS geofence "…Kirkegade 50" (backup if
+//                           the Shelly BLE fails to connect, which it sometimes does)
 // OR is safe here: "home" never turns the relay on by itself — the charger
 // still has to be BLE-present with a real secondary connection. Home is a
 // defence-in-depth gate, not the trigger.
-const HOME_GEOFENCE_MATCH = 'Home';   // substring match on Vehicle10_GeofenceName — set to your own home geofence name
+const HOME_GEOFENCE_MATCH = 'Kirkegade 50';   // substring match on Vehicle10_GeofenceName
 
 // --- Secondary-connection detection (added 2026-08-06) ----------------------
 // Proves the Victron's DC clamps are physically on the bike (not just mains on
@@ -72,7 +133,9 @@ const SECONDARY_TOLERANCE  = 0.35;  // delta may exceed baseline by this much an
 // output. If batV exceeds chgV by more than this, an EXTERNAL source is driving
 // the battery over the charger setpoint — in practice the engine's alternator
 // (~14.4V) while the bike idles at the garage. That is NOT a secondary
-// connection, so we reject it (guards against a generator-driven false positive).
+// connection, so we must reject it (root cause of today's spurious dumps:
+// generator 14.4V vs charger 13.25V → delta -1.15V slipped under the old
+// one-sided upper bound and read as "connected").
 const SECONDARY_LOWER_MARGIN = 0.50; // batV may sit at most this far above chgV and still count as connected
 const DEFAULT_BASELINE     = 0.10;  // bootstrap baseline before any real charge is observed (data median +0.08V)
 const BASELINE_EMA_ALPHA   = 0.10;  // exponential-moving-average weight for new baseline samples
@@ -85,6 +148,11 @@ const BASELINE_SANE_HI     =  0.50; //   transient/garbage readings poisoning th
 // watchdog). RELAY_ABS_MAX_MIN is enforced by the watchdog using the PERSISTED
 // MC_K7_Relay_Since timestamp, so it survives reloads and covers every state.
 const RELAY_ABS_MAX_MIN    = 30;    // hard ceiling on relay-ON time, timer-independent
+
+// Watchdog intervention alert debounce. The watchdog runs every 2 min, so a
+// stuck condition would otherwise fire an email/SMS every cycle. Suppress
+// repeat alerts for the same intervention within this window.
+const WATCHDOG_ALERT_COOLDOWN_MIN = 180;  // 3h between watchdog intervention alerts
 
 const STATES = {
   PARKED: 'PARKED', RIDING: 'RIDING', CHARGING: 'CHARGING',
@@ -209,7 +277,9 @@ function isBLEConnected() {
 // (e.g. "…+0200"), and the Victron daemon likewise posts "+0100" — but
 // java.time.ZonedDateTime.parse() only accepts the ISO offset WITH a colon
 // ("+02:00"). Normalise before parsing. Centralised here because getting this
-// wrong silently broke the watchdog's absolute max-on guard for days.
+// wrong silently broke the watchdog's absolute max-on guard for days:
+// MC_K7_Relay_Since failed to parse every 2 min ("could not be parsed at index
+// 23") → GUARD 2 threw and never enforced the hard relay-on ceiling.
 function parseOHDateTime(raw) {
   var s = raw.toString().replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
   return time.ZonedDateTime.parse(s);
@@ -246,7 +316,7 @@ function getBLEState() {
 function isBLEPlausible() {
   try {
     var bleV = parseFloat(items.getItem('MC_Charger_Voltage').state) || 0;
-    var shellyV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
+    var shellyV = batteryVolts() || 0;
     if (bleV === 0 || shellyV === 0) return true;  // Missing data — don't block
     var delta = Math.abs(bleV - shellyV);
     if (delta > BLE_PLAUSIBLE_DELTA) {
@@ -337,11 +407,11 @@ function isHome() {
 //
 //   Gate : bike home AND charger BLE online+fresh, else off (fail-safe).
 //   Proof D (primary): the Pi daemon reports whether charge-current registers
-//            appeared in its recent BLE cycles (MC_Charger_Secondary_Proof).
-//            Current only flows through a CLOSED circuit, so "current seen" is
-//            a hard physical fact and it holds even at a full battery (the
-//            charger keeps pushing a small maintenance current). Empirically
-//            validated with a live clamp on/off A/B test on 2026-08-09.
+//            appeared in its recent BLE cycles. Current only flows through a
+//            CLOSED circuit, so "current seen" is a hard physical fact and it
+//            holds even at a full battery (the charger keeps pushing a small
+//            maintenance current). Empirically validated with a live clamp
+//            on/off A/B test on 2026-08-09.
 //   Proof B (fallback): instantaneous charge current >= CURRENT_PROOF_A, used
 //            only for the brief window before the daemon has posted Proof D
 //            (item NULL right after a daemon restart).
@@ -402,7 +472,7 @@ function evaluateSecondary() {
   // Never reached while the daemon is live, because Proof D is always one of
   // connected/off/uncertain in that case.
   var chgV = parseFloat(items.getItem('MC_Charger_Voltage').state);
-  var batV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
+  var batV = batteryVolts();
   if (isNaN(chgV) || isNaN(batV)) return { on: false, reason: 'Off \u2014 no charger data' };
   var delta = chgV - batV;
   // Generator/alternator rejection: batV far ABOVE chgV means an external
@@ -443,7 +513,7 @@ function learnConnectedBaseline() {
     if (isNaN(amps) || amps < BASELINE_LEARN_A) return;
 
     var chgV = parseFloat(items.getItem('MC_Charger_Voltage').state);
-    var batV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
+    var batV = batteryVolts();
     if (isNaN(chgV) || isNaN(batV)) return;
 
     var sample = chgV - batV;
@@ -471,6 +541,27 @@ function startChargerSequence(voltage, source) {
   // like the home charger regime, so away = never power.
   if (!isHome()) {
     console.info(LOG + ': Charger sequence blocked \u2014 bike not home (ESP+GPS both away). Source=' + source);
+    return;
+  }
+
+  // HARD LEAD GATE, added 2026-09-12 with the move to the garage.
+  //
+  // The relay coil now lives at the far end of a lead the owner plugs in by
+  // hand, and not plugging it in is an ordinary decision — charge the machine,
+  // leave the camera alone. Without the lead the coil cannot be energised, the
+  // camera is never told to wake, and a dump sequence would run its whole state
+  // machine against a camera that never came up.
+  //
+  // So it is a precondition, not a failure. No alert, no retry, no error state:
+  // MC_K7_Lead_Connected going ON is itself a trigger elsewhere, so plugging in
+  // later simply starts the sequence. The system rests, and resumes.
+  //
+  // Proven on the bench 2026-09-12: lead in reads 0.870 V across the sense
+  // resistor, lead out reads 0.000 V, transition inside one sample either way.
+  if (!leadConnected()) {
+    console.info(LOG + ': Charger sequence not started \u2014 garage lead not connected. '
+      + 'This is a normal state, not a fault. Source=' + source);
+    items.getItem('MC_K7_Power_Reason').postUpdate('Lead not connected \u2014 charging only, no dump');
     return;
   }
 
@@ -523,7 +614,7 @@ function startChargerSequence(voltage, source) {
   var stabTimer = actions.ScriptExecution.createTimer(
     time.ZonedDateTime.now().plusSeconds(STAB_SEC),
     function () {
-      var recheck = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
+      var recheck = batteryVolts();
       var bleOnline = isBLEOnline();
       var bleChg = isBLECharging();
       var bleCon = isSecondaryConnected();  // physical-clamp truth, not loose BLE flag
@@ -625,11 +716,10 @@ rules.JSRule({
     // a reload during TRANSFERRING/RIDING/etc. would cause the init to
     // silently skip the charger sequence, leaving state stuck.
     setState(STATES.PARKED, 'System start - init reset');
-    var powerItem = items.getItem('MC_K7_Shelly_Voltage');
-    var voltage = (!powerItem.isUninitialized && powerItem.state !== 'NULL')
-      ? parseFloat(powerItem.state) : 0;
+    var voltage = batteryVolts() || 0;
 
-    console.info(LOG + ': Init: Shelly V=' + voltage.toFixed(1) + 'V, ' + getBLEInfo());
+    console.info(LOG + ': Init: battery ' + voltage.toFixed(1) + 'V (' + BATTERY_ITEM + '), '
+      + getBLEInfo() + ', lead ' + (leadConnected() ? 'connected' : 'not connected'));
 
     var bleCharging = isBLECharging();
     var bleOnline = isBLEOnline();
@@ -731,7 +821,7 @@ rules.JSRule({
         var checkTimer = actions.ScriptExecution.createTimer(
           time.ZonedDateTime.now().plusSeconds(10),
           function () {
-            var v = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state);
+            var v = batteryVolts();
             var bleChg = isBLECharging();
             var bleCon = isBLEConnected();
             console.info(LOG + ': Post-ignition check: V=' + v.toFixed(1) + 'V [' + getBLEInfo() + ']');
@@ -759,12 +849,11 @@ rules.JSRule({
 rules.JSRule({
   name: 'K7 Power - Voltage Monitor',
   description: 'Monitors battery voltage for charger detection and low battery',
-  triggers: [triggers.ItemStateChangeTrigger('MC_K7_Shelly_Voltage')],
+  triggers: [triggers.ItemStateChangeTrigger(BATTERY_ITEM)],
   execute: function () {
     try {
-      var powerItem = items.getItem('MC_K7_Shelly_Voltage');
-      if (powerItem.isUninitialized) return;
-      var voltage = parseFloat(powerItem.state);
+      var voltage = batteryVolts();
+      if (voltage === null) return;   // no reading is not a flat battery
       var currentState = getState();
 
       if (voltage < LOW_BATT_V) {
@@ -927,12 +1016,10 @@ rules.JSRule({
       }
       var data = JSON.parse(json);
 
-      // --- Voltage (ADC with calibration offset) ---
-      if (data['voltmeter:100'] && typeof data['voltmeter:100'].voltage === 'number') {
-        var rawV = data['voltmeter:100'].voltage;
-        var calibV = rawV + ADC_OFFSET;
-        items.getItem('MC_K7_Shelly_Voltage').postUpdate(calibV.toFixed(2));
-      }
+      // The ADC is no longer read here. It measures coil current now, and
+      // vehicle-motorcycle-k7-lead.js owns that reading — two writers on one item
+      // is how a value starts flickering between two meanings.
+
 
       // --- Relay state sync (switch:0 = K7 MOSFET relay) ---
       if (data['switch:0']) {
@@ -1036,7 +1123,7 @@ rules.JSRule({
     try {
       var bleState = items.getItem('MC_Charger_BLE_Online').state;
       var currentState = getState();
-      var voltage = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
+      var voltage = batteryVolts() || 0;
 
       if (bleState === 'ON') {
         console.info(LOG + ': BLE Online - V=' + voltage.toFixed(1) + 'V, state=' + currentState + ' [' + getBLEInfo() + ']');
@@ -1086,7 +1173,7 @@ rules.JSRule({
     try {
       var bleState = getBLEState();
       var currentState = getState();
-      var voltage = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
+      var voltage = batteryVolts() || 0;
 
       console.info(LOG + ': BLE State changed to ' + bleState + ' [V=' + voltage.toFixed(1) + 'V, state=' + currentState + ']');
 
@@ -1118,7 +1205,7 @@ rules.JSRule({
             }
             // Check voltage: if still above charger threshold, mains is still connected
             // \u2014 the Victron is just sitting in Idle on a full battery. Stay DUMP_DONE.
-            var v = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
+            var v = batteryVolts() || 0;
             if (v > CHARGER_ON_V) {
               console.info(LOG + ': Disconnect timer fired but V=' + v.toFixed(1) + 'V (>' + CHARGER_ON_V + ') \u2014 charger mains still connected, restarting timer');
               var newDt = actions.ScriptExecution.createTimer(time.ZonedDateTime.now().plusMinutes(5), disconnectCheck);
@@ -1161,7 +1248,7 @@ rules.JSRule({
     // grows past the threshold. Recompute on voltage/current ticks so the
     // clamps-off transition is detected within a poll cycle, not left stale.
     triggers.ItemStateChangeTrigger('MC_Charger_Voltage'),
-    triggers.ItemStateChangeTrigger('MC_K7_Shelly_Voltage'),
+    triggers.ItemStateChangeTrigger(BATTERY_ITEM),
     triggers.ItemStateChangeTrigger('MC_Charger_Current')
   ],
   execute: function () {
@@ -1170,6 +1257,105 @@ rules.JSRule({
 });
 
 // =============================================================================
+// Watchdog intervention alert
+// Sends an email + SMS whenever a watchdog guard has to force the relay OFF.
+// The watchdog is the last line of defence — if it fires, an event-driven rule
+// missed something, so we want a proactive heads-up. Debounced via cache.private
+// to avoid spamming every 2-min cycle while a condition persists.
+// =============================================================================
+function sendWatchdogAlert(reason, currentState) {
+  try {
+    var last = cache.private.get('watchdogAlertAt');
+    if (last) {
+      var lastT = time.ZonedDateTime.parse(last);
+      var mins = time.Duration.between(lastT, time.ZonedDateTime.now()).toMinutes();
+      if (mins < WATCHDOG_ALERT_COOLDOWN_MIN) {
+        console.info(LOG + ': Watchdog alert suppressed (last ' + mins + 'min ago, cooldown ' + WATCHDOG_ALERT_COOLDOWN_MIN + 'min)');
+        return;
+      }
+    }
+    cache.private.put('watchdogAlertAt', time.ZonedDateTime.now().toString());
+
+    // Gather live context for the alert body (best-effort; never throw).
+    function safeState(name) {
+      try {
+        var s = items.getItem(name).state;
+        return (s === null || s === undefined || s === 'NULL' || s === 'UNDEF') ? '?' : ('' + s);
+      } catch (e) { return '?'; }
+    }
+    var chgState  = safeState('MC_Charger_State');
+    var chgV      = safeState('MC_Charger_Voltage');
+    var chgA      = safeState('MC_Charger_Current');
+    var battV     = safeState(BATTERY_ITEM);
+    var secConn   = safeState('MC_Secondary_Connected');
+    var sinceRaw  = safeState('MC_K7_Relay_Since');
+
+    var v = getVehicleData();
+    var mail = actions.Things.getActions('mail', notify.mailThing);
+
+    var body = buildEmail({
+      headerColor: '#f44336',
+      headerTitle: '&#9888;&#65039; K7 WATCHDOG INTERVENTION',
+      headerSubtitle: 'Relay forced OFF by safety watchdog',
+      timestamp: v.ts,
+      alertBgColor: '#ffebee',
+      alertTitle: '&#128721; Watchdog forced the K7 relay OFF',
+      alertDescription: 'The relay-safety watchdog had to intervene: ' + reason +
+        '. This means an event-driven rule missed a condition, so the last-line-of-defence watchdog caught it. The relay is now OFF.',
+      location: {
+        address: v.address,
+        lat: v.lat,
+        lon: v.lon,
+        title: '&#128205; Bike Location'
+      },
+      dataRows: [
+        { icon: '&#9881;&#65039;', label: 'Power State', value: currentState, bgColor: '#ffebee' },
+        { icon: '&#128268;', label: 'Charger State', value: chgState, bgColor: '#fff3e0' },
+        { icon: '&#9889;', label: 'Charger V / A', value: chgV + ' V / ' + chgA + ' A', bgColor: '#e3f2fd' },
+        { icon: '&#128267;', label: 'Battery V', value: battV + ' V', bgColor: '#e8f5e9' },
+        { icon: '&#128279;', label: 'Clamps On Bike', value: secConn, bgColor: '#f3e5f5' },
+        { icon: '&#128337;', label: 'Relay ON Since', value: sinceRaw, bgColor: '#fce4ec' }
+      ],
+      footerText: 'Automatic K7 drain-prevention watchdog — no action needed if this was expected.'
+    });
+
+    mail.sendHtmlMail(notify.nanna.email, '&#9888;&#65039; K7 WATCHDOG INTERVENTION', body);
+    mail.sendMail(notify.nanna.sms, 'K7 WATCHDOG',
+      'K7 watchdog forced relay OFF at ' + v.ts + '. Reason: ' + reason +
+      '. State=' + currentState + ', clampsOnBike=' + secConn + ', chg=' + chgState + '.');
+    console.warn(LOG + ': Watchdog intervention alert sent — ' + reason);
+  } catch (e) {
+    console.error(LOG + ': sendWatchdogAlert error: ' + e.message);
+  }
+}
+
+// =============================================================================
+// Rule 13: Lead Connected — resume what the missing lead had parked
+//
+// The gate in startChargerSequence() refuses to start without the lead, and
+// promises that plugging in later simply resumes. This is that promise.
+//
+// It is deliberately not a retry: nothing is scheduled, nothing is pending, and
+// the system is not waiting. It is at rest. Plugging the lead in is a new event
+// that happens to satisfy the one precondition that was missing, and the same
+// sequence starts as if the charger had just arrived.
+rules.JSRule({
+  name: 'K7 Power - Lead Connected',
+  description: 'Resume the charger sequence when the lead is plugged in after the fact',
+  triggers: [triggers.ItemStateChangeTrigger('MC_K7_Lead_Connected', 'OFF', 'ON')],
+  execute: function () {
+    try {
+      if (getState() !== STATES.PARKED) return;
+      var v = batteryVolts();
+      if (v === null) return;
+      console.info(LOG + ': Lead connected while parked \u2014 re-evaluating charger sequence');
+      startChargerSequence(v, 'Lead connected');
+    } catch (e) {
+      console.error(LOG + ': Lead-connected handler error: ' + e.message);
+    }
+  }
+});
+
 // Rule 11: Relay Safety Watchdog (cron)
 // Periodically verifies relay state is consistent with state machine.
 // Catches relay self-ON events that may be missed by event-driven rules
@@ -1215,6 +1401,7 @@ rules.JSRule({
         console.warn(LOG + ': WATCHDOG: Relay ON but state is ' + currentState + ' \u2014 forcing OFF');
         relayOff('WATCHDOG: relay ON in ' + currentState);
         items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: relay ON in ' + currentState + ' \u2014 forced OFF');
+        sendWatchdogAlert('relay ON in resting state ' + currentState, currentState);
         return;
       }
 
@@ -1233,6 +1420,7 @@ rules.JSRule({
             relayOff('WATCHDOG: absolute max-on ' + onMin + 'min');
             rearmToParked('WATCHDOG: absolute max-on ' + onMin + 'min');
             items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: absolute max-on ' + onMin + 'min \u2014 forced OFF');
+            sendWatchdogAlert('absolute max-on ' + onMin + 'min (>= ' + RELAY_ABS_MAX_MIN + ')', currentState);
             return;
           }
         }
@@ -1249,6 +1437,7 @@ rules.JSRule({
         relayOff('WATCHDOG: drain guard \u2014 clamps off bike in ' + currentState);
         rearmToParked('WATCHDOG: drain guard \u2014 clamps off bike');
         items.getItem('MC_K7_Power_Reason').postUpdate('WATCHDOG: clamps off bike in ' + currentState + ' \u2014 forced OFF (drain guard)');
+        sendWatchdogAlert('drain guard \u2014 clamps NOT on bike in ' + currentState, currentState);
         return;
       }
     } catch (e) {

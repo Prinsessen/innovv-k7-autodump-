@@ -30,6 +30,13 @@ var STAGE_PRIORITY = {
 };
 
 // ---- Rule 1: Track charge session lifecycle ----
+//
+// SENSOR NOTE, 2026-09-12: session start/end voltages now come from
+// Vehicle10_Power (the FMM920 tracker), not the Shelly ADC. The Shelly moved to
+// the garage and its ADC measures relay coil current now, so this file would
+// have logged 0.00 V for every session from that day on. It was not in the
+// migration plan — found by grepping for the old item rather than by trusting
+// the plan to be complete.
 rules.JSRule({
   name: 'K7 Charge History - Session Tracker',
   description: 'Logs charge sessions to InfluxDB when power state transitions happen',
@@ -41,7 +48,7 @@ rules.JSRule({
 
       // --- Session START: entering CHARGING ---
       if (newState === 'CHARGING') {
-        var voltage = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
+        var voltage = parseFloat(items.getItem('Vehicle10_Power').state) || 0;
         var yield_kWh = parseFloat(items.getItem('MC_Charger_Yield').state) || 0;
         var now = time.ZonedDateTime.now();
 
@@ -65,7 +72,7 @@ rules.JSRule({
         var startYield = cache.private.get('sessionStartYield') || 0;
         var peakStage = cache.private.get('sessionPeakStage') || 'Unknown';
 
-        var endV = parseFloat(items.getItem('MC_K7_Shelly_Voltage').state) || 0;
+        var endV = parseFloat(items.getItem('Vehicle10_Power').state) || 0;
         var endYield = parseFloat(items.getItem('MC_Charger_Yield').state) || 0;
 
         // Calculate duration using epoch millis (avoids GraalJS proxy crash)
