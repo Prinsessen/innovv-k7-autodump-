@@ -74,6 +74,24 @@ function relayIsOn() {
   return (r && typeof r.output === 'boolean') ? r.output : null;
 }
 
+/**
+ * How long the relay has been closed, in milliseconds, or null if unknown.
+ *
+ * Reads MC_K7_Relay_Since, which vehicle-motorcycle-k7-power.js maintains on
+ * every relay transition. Unknown returns null, and callers treat that as "no
+ * reason to wait" rather than blocking on a missing value.
+ */
+function relayClosedMsAgo() {
+  try {
+    const st = items.getItem('MC_K7_Relay_Since').state;
+    if (!st || st === 'NULL' || st === 'UNDEF') return null;
+    const t = time.ZonedDateTime.parse(st.toString());
+    return time.Duration.between(t, time.ZonedDateTime.now()).toMillis();
+  } catch (e) {
+    return null;
+  }
+}
+
 function publish(connected, volts) {
   if (volts !== null) {
     items.getItem(SENSE_ITEM).postUpdate(volts);
@@ -142,9 +160,44 @@ rules.JSRule({
   execute: function () {
     safeExecute(LOG + ' passive', function () {
       if (relayIsOn() !== true) return;   // nothing to read with the coil open
+
+      // The coil pulls in within milliseconds. The Shelly's ADC does not report
+      // it that fast -- up to two seconds, which is why probe() waits SETTLE_MS
+      // before believing a reading. This rule had no such wait, and on
+      // 2026-09-12 it ran 158 ms after the relay closed, read the stale 0.000 V,
+      // and published "not connected" on a lead that was plugged in the whole
+      // time. Rule 14 in k7-power.js then did as it was told and aborted the
+      // dump.
+      //
+      // A cosmetic race became a functional failure the moment something acted
+      // on the answer. Wait out the same settle window the probe does.
+      const since = relayClosedMsAgo();
+      if (since !== null && since < SETTLE_MS) return;
+
       const v = senseVolts();
       if (v === null) return;
-      publish(v >= LEAD_THRESHOLD_V, v);
+      const connected = v >= LEAD_THRESHOLD_V;
+
+      // One low reading is not proof. Anything that disturbs a single sample --
+      // a slow HTTP round trip, a report that has not landed yet -- would
+      // otherwise abort a healthy transfer. Two in a row, ten seconds apart, is
+      // still well inside the window that matters: losing the lead mid-dump is
+      // caught within twenty seconds instead of ten, and nothing is riding on
+      // those ten seconds.
+      //
+      // Going the other way needs no confirmation. A reading that says the lead
+      // IS there cannot be produced by a missing circuit.
+      if (!connected) {
+        const prev = cache.private.get('lowSeen');
+        if (!prev) {
+          cache.private.put('lowSeen', true);
+          console.info(LOG + ': sense low (' + v.toFixed(3) + ' V) — waiting for a second reading before believing it');
+          return;
+        }
+      }
+      cache.private.put('lowSeen', false);
+
+      publish(connected, v);
     });
   }
 });
