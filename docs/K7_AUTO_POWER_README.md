@@ -43,11 +43,13 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
                           │                                         │
   Traccar FMM920 ────────>│  vehicle-motorcycle-k7-power.js         │
   (Vehicle10_Ignition)     │  ┌───────────────────────────────────┐ │
-  Shelly ADC ─────────────>│  │ State Machine (10 JSRules)        │ │
-  (MC_K7_Shelly_Voltage)   │  │                                   │ │
-  Victron BLE ────────────>│  │ DUAL-SENSOR charger detection:    │ │
-  (MC_Charger_BLE_Online)  │  │   PRIMARY:  BLE charger state     │ │
-  (MC_Charger_State)       │  │   FALLBACK: Shelly ADC voltage    │ │
+  Tracker battery ────────>│  │ State Machine (14 JSRules)        │ │
+  (Vehicle10_Power)        │  │                                   │ │
+  Victron BLE ────────────>│  │ Charger detection:                │ │
+  (MC_Charger_BLE_Online)  │  │   ONLY:     BLE charger state     │ │
+  (MC_Charger_State)       │  │   FALLBACK: tracker voltage       │ │
+  Garage lead ────────────>│  │   GATE:     lead must be in       │ │
+  (MC_K7_Lead_Connected)   │  │                                   │ │
                            │  │                                   │ │
                            │  │ RIDING->CHARGING->TRANSFERRING    │ │
                            │  │ ->COOLDOWN->DUMP_DONE->PARKED     │ │
@@ -204,7 +206,7 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 |------|---------|
 | `items/motorcycle_k7_power.items` | 22 items: Shelly channels + BLE charger items + virtual state items |
 | `things/shelly.things` | Shelly Plus Uni thing definition (IP: 192.168.1.62) |
-| `automation/js/vehicle-motorcycle-k7-power.js` | State machine (10 JSRules): dual-sensor charger detection with BLE + voltage fallback |
+| `automation/js/vehicle-motorcycle-k7-power.js` | State machine, 14 rules. BLE is the only charger sensor; the tracker voltage is the fallback |
 | `shelly-scripts/k7-failsafe.js` | **Current** on-device failsafe (mJS, Script ID 1). A heartbeat watchdog — no voltage thresholds |
 | `innovv-k7/shelly-failsafe-script.js` | **Superseded 2026-09-12.** The voltage-threshold failsafe from when the controller lived on the motorcycle. Kept for reference only — do not upload it |
 | `innovv-k7/pi-software/innovv_k7_dump.py` | Pi dump service (**NOT modified**) |
@@ -672,8 +674,12 @@ version could not survive the move.
 
 | Item | Type | Channel | Purpose |
 |------|------|---------|---------|
-| `MC_K7_Relay` | Switch | `relay1#output` | Shelly relay (drives MOSFET gate) |
-| `MC_K7_Shelly_Voltage` | Number:ElectricPotential | `sensors#voltage` | ADC battery voltage (Voltmeter:100, raw — no offset) |
+| `MC_K7_Relay` | Switch | virtual, HTTP | Controller relay. Feeds the G6S-2 coil on the machine |
+| `MC_K7_Sense_Voltage` | Number:ElectricPotential | virtual, HTTP | **The ADC.** Voltage across the 100 Ω in the coil's return leg — 0.000 V open, ~0.86 V energised. **Not a battery reading** |
+| `MC_K7_Shelly_Voltage` | Number:ElectricPotential | virtual, HTTP | Same reading under its old name, fed in parallel so nothing downstream lost its sensor during the migration. Retire once every consumer has moved |
+| `MC_K7_Lead_Connected` | Switch | virtual | Is the garage lead plugged into the machine. Gate on the whole dump process |
+| `MC_K7_Lead_Checked` | DateTime | virtual | When that answer was last established. Updates every 10 s while the relay is closed |
+| `MC_K7_Lead_Test` | Switch | virtual | Momentary. Probes on demand from the sitemap |
 | `MC_K7_Shelly_WiFi_Signal` | Number | `device#wifiSignal` | WiFi signal strength (0-4 bars) |
 | `MC_K7_Shelly_Uptime` | Number:Time | `device#uptime` | Seconds since Shelly power-on |
 | `MC_K7_Shelly_LastUpdate` | DateTime | `sensors#lastUpdate` | Last state change timestamp |
@@ -722,22 +728,78 @@ version could not survive the move.
 | `MC_Charge_Session_Peak` | String | Peak charge stage reached |
 | `MC_Charge_Session_Count` | Number | Total charge sessions count |
 
-**Total: 30 items** (1 group + 29 items) in `items/motorcycle_k7_power.items`
+**Total: 42** (1 group + 41 items) in `items/motorcycle_k7_power.items` — counted from the file on 2026-09-12, not carried forward
 
-## Rules Reference (10 JSRules)
+## Rules Reference
+
+**Two files, 19 rules.** Verified against the source on 2026-09-12 rather than
+carried forward from an earlier edit; the table below said "10 JSRules" for
+months after there were fourteen.
+
+### `vehicle-motorcycle-k7-power.js` — 14 rules
 
 | # | Rule | Trigger | Action |
 |---|------|---------|--------|
-| 1 | System Init | System startup (level 100) | Relay OFF, voltage-aware + BLE-aware state selection, `updateChargerConnection()` |
-| 2 | Ignition Handler | `Vehicle10_Ignition` changed | 5s debounce (1N4007 diode installed), MOSFET back-feed suppression during TRANSFERRING/COOLDOWN, DUMP_DONE → RIDING allowed |
-| 3 | Voltage Monitor | `MC_K7_Shelly_Voltage` changed | Charger detect (>13.0V), charger removed (<12.7V, only when BLE not charging), low battery (<12.0V) |
-| 4 | Dump Complete | `K7_Dump_Status` changed | Cooldown (30s) then relay OFF → DUMP_DONE |
-| 5 | Shelly WiFi Poll | Cron every minute | HTTP GET to Shelly API, updates SSID + RSSI |
-| 6 | Relay State Tracker | `MC_K7_Relay` changed | Updates `MC_K7_Relay_Since` on ON, clears on OFF |
-| 7 | Manual Relay Override | `MC_K7_Relay` command ON | Manual relay ON triggers dump from DUMP_DONE or PARKED |
-| 8 | BLE Charger Online | `MC_Charger_BLE_Online` changed | BLE ON: start charger sequence if PARKED + charging. BLE OFF: re-arm if DUMP_DONE, cancel if CHARGING |
-| 9 | BLE Charge State | `MC_Charger_State` changed | Off → re-arm from DUMP_DONE. Bulk/Absorption/Float/Storage/Idle → start sequence from PARKED |
-| 10 | Charger Connection Status | `MC_Charger_BLE_Online` or `MC_Charger_State` changed | Computes `MC_Charger_Connection` string |
+| 1 | System Init | startlevel 100 | Relay OFF, BLE-aware state selection, `updateChargerConnection()` |
+| 2 | Ignition Handler | `Vehicle10_Ignition` changed | 5 s debounce. The 1N4007 blocks back-feed from the switched ignition line, so the debounce is only for generic noise |
+| 3 | Voltage Monitor | `Vehicle10_Power` changed | Low battery (< 12.0 V) and recovery. **Charger detection by voltage is gone** — BLE is the only sensor |
+| 4 | Dump Complete | `K7_Dump_Status` changed | COOLDOWN (30 s, relay stays ON) then relay OFF → DUMP_DONE |
+| 5 | Manual Relay Override | `MC_K7_Relay` command ON | Starts a dump from DUMP_DONE or PARKED |
+| 6 | Shelly Status Poll | cron every 30 s | Full `Shelly.GetStatus`: relay sync, WiFi, uptime. Also writes the heartbeat the on-device failsafe watches |
+| 7 | Relay State Tracker | `MC_K7_Relay` changed | Maintains `MC_K7_Relay_Since`; counter-punches an unexpected ON |
+| 8 | BLE Charger Online | `MC_Charger_BLE_Online` changed | Starts the sequence from PARKED; re-arms or cancels on OFF |
+| 9 | BLE Charge State | `MC_Charger_State` changed | Starts the sequence from PARKED on any connected stage |
+| 10 | Charger Connection Status | BLE online/state/voltage/current, `Vehicle10_Power` | Computes `MC_Charger_Connection` and `MC_Secondary_Connected` |
+| 11 | **Lead Connected** | `MC_K7_Lead_Connected` OFF→ON | Resumes the sequence the missing lead had parked. Only from PARKED |
+| 12 | **Lead Disconnected** | `MC_K7_Lead_Connected` ON→OFF | **Added 2026-09-12.** Aborts an in-flight dump: relay OFF, back to PARKED |
+| 13 | Relay Safety Watchdog | cron every 2 min | Four guards — see below |
+| 14 | Secondary Baseline Learner | `MC_Charger_Current` changed | Self-calibrates the clamps-on-bike voltage delta |
+
+### `vehicle-motorcycle-k7-lead.js` — 5 rules
+
+**New 2026-09-12.** Answers whether the garage lead is plugged into the machine.
+
+| # | Rule | Trigger | Action |
+|---|------|---------|--------|
+| 1 | Passive Sense | cron every 10 s | Reads the sense voltage — but **only while the relay is already closed**, because an open relay reads 0 V either way |
+| 2 | Probe When Charger Connects | `MC_Secondary_Connected` or `MC_Charger_BLE_Online` OFF→ON | One probe, 60 s guard against the two firing together |
+| 3 | Probe On Demand | `MC_K7_Lead_Connected` command REFRESH | For anything that needs a fresh answer |
+| 4 | Automatic While Charging | cron at :07 and :37 | Only while the charger is connected **and the lead is believed disconnected** — see the note below |
+| 5 | Test Button | `MC_K7_Lead_Test` command ON | The only way to check from the screen while at rest |
+
+> **Why rule 4 will not probe when the lead is already in.** A probe closes the
+> relay. With the lead connected that energises the coil, closes the contact, and
+> puts 12 V on the camera's ignition line — the camera wakes for the three
+> seconds the coil is held. With the lead **out** there is no circuit at all:
+> nothing moves and the camera cannot tell the probe happened.
+>
+> So the probe is free exactly when it has something to tell us, and costs a
+> wake-up exactly when it does not. Before this gate was added it fired 48 times
+> a day on a camera the whole design tries to keep asleep.
+
+### Watchdog guards (rule 13)
+
+| Guard | Condition | Action |
+|---|---|---|
+| 1 | Relay ON in PARKED, DUMP_DONE or LOW_BATTERY | Force OFF. **COOLDOWN is deliberately not in this list** — see below |
+| 2 | `MC_K7_Relay_Since` older than `RELAY_ABS_MAX_MIN` | Force OFF, re-arm. State-independent, survives a rules reload |
+| 3 | Relay ON in TRANSFERRING/CHARGING with clamps not proven on the bike | Force OFF — the overnight-drain case |
+| 4 | Relay ON in TRANSFERRING/CHARGING with the garage lead not connected | **Added 2026-09-12.** Force OFF. Reads the item, not the ADC, so a network blip cannot abort a good dump |
+
+> **COOLDOWN was in guard 1 until 2026-09-12, and it should never have been.**
+> Rule 4 puts the machine in COOLDOWN and *deliberately leaves the relay on* for
+> 30 seconds so the camera can close its files; its own timer then opens it. The
+> watchdog fought that timer whenever its two-minute tick landed inside the
+> window.
+>
+> Measured across the logs on disk: **8 of 15 dumps were cut short.** One run
+> gave the camera 7 seconds of the 30 it should have. Present since 2026-03-22
+> and invisible the whole time, because nothing raises an alarm when a shutdown
+> is rushed.
+>
+> Verified fixed on hardware the same evening: cooldown began 19:43:32.568,
+> relay opened 19:44:02.571 — **30.003 seconds, no watchdog line in the log.**
+
 
 ### Key Helper Functions
 
@@ -881,7 +943,8 @@ All scenarios tested live with real hardware:
 ### Charger not detected
 - **BLE:** Check `MC_Charger_BLE_Online` — should be ON when charger has mains
 - **BLE daemon:** `ssh pi@192.168.1.60 'journalctl -u victron-ble-monitor -f --no-pager'`
-- **Voltage fallback:** Check `MC_K7_Shelly_Voltage` — should be >13.0V when charger connected
+- **Voltage fallback:** Check `Vehicle10_Power` (the tracker) — the Shelly ADC is no longer a battery reading
+- **Lead:** Check `MC_K7_Lead_Connected`. OFF is a normal state, not a fault — it means charge only, no dump. `MC_K7_Lead_Checked` says how old that answer is
 - **Grace period:** If within 5 min of last re-arm, voltage-only triggers are suppressed (check logs for "Suppressed" messages)
 - Check raw Shelly ADC via `http://192.168.1.62/rpc/Voltmeter.GetStatus?id=100`
 

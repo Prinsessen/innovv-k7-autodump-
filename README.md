@@ -34,11 +34,13 @@ No manual intervention. Footage is automatically backed up whenever you charge.
                           │                                         │
   Traccar FMM920 ────────>│  vehicle-motorcycle-k7-power.js         │
   (Vehicle10_Ignition)     │  ┌───────────────────────────────────┐ │
-  Shelly ADC ─────────────>│  │ State Machine (10 JSRules)        │ │
-  (MC_K7_Shelly_Voltage)   │  │                                   │ │
-  Victron BLE ────────────>│  │ DUAL-SENSOR charger detection:    │ │
-  (MC_Charger_BLE_Online)  │  │   PRIMARY:  BLE charger state     │ │
-  (MC_Charger_State)       │  │   FALLBACK: Shelly ADC voltage    │ │
+  Tracker battery ────────>│  │ State Machine (14 JSRules)        │ │
+  (Vehicle10_Power)        │  │                                   │ │
+  Victron BLE ────────────>│  │ Charger detection:                │ │
+  (MC_Charger_BLE_Online)  │  │   ONLY:     BLE charger state     │ │
+  (MC_Charger_State)       │  │   FALLBACK: tracker voltage       │ │
+  Garage lead ────────────>│  │   GATE:     lead must be in       │ │
+  (MC_K7_Lead_Connected)   │  │                                   │ │
                            │  │                                   │ │
                            │  │ PARKED→CHARGING→TRANSFERRING      │ │
                            │  │ →COOLDOWN→DUMP_DONE→PARKED        │ │
@@ -288,17 +290,25 @@ innovv-k7-autodump/
 │   └── shelly-failsafe-script.js          ← On-device mJS failsafe script
 ├── openhab/
 │   ├── items/
-│   │   ├── motorcycle_k7_power.items      ← Shelly + BLE charger + session tracking + virtual state items (30 items)
+│   │   ├── motorcycle_k7_power.items      ← Relay, lead, BLE charger, session tracking (42 items)
 │   │   └── innovv_k7.items                ← Pi dump service status + Storage Health items (SD free/used/card status)
 │   ├── things/
-│   │   └── shelly.things                  ← Shelly Plus Uni thing definition
+│   │   └── shelly.things                  ← Controller thing definition
 │   ├── rules/
-│   │   └── vehicle-motorcycle-k7-power.js ← State machine (10 JSRules, dual-sensor BLE + voltage)
+│   │   ├── vehicle-motorcycle-k7-power.js ← State machine, 14 rules
+│   │   ├── vehicle-motorcycle-k7-lead.js  ← Garage lead detection, 5 rules
+│   │   ├── vehicle-motorcycle-ignition.js ← Ignition notifications
+│   │   ├── vehicle-motorcycle-k7-notify.js ← Dump result notifications
+│   │   └── vehicle-motorcycle-k7-charge-history.js ← Per-session charge logging
 │   ├── icons/                             ← Sitemap icons (k7-*, victron-*)
 │   └── transform/
-│       └── k7_onoff.map                   ← ON/OFF display mapping
+│       ├── k7_onoff.map                   ← Relay ON/OFF display mapping
+│       ├── k7_connected.map               ← Charger clamps display mapping
+│       └── k7_lead.map                    ← Garage lead display mapping
+├── shelly-scripts/
+│   └── k7-failsafe.js                     ← On-device failsafe. Heartbeat watchdog, no voltage thresholds
 └── docs/
-    ├── K7_AUTO_POWER_README.md            ← Detailed auto-power documentation (BLE integration, all 10 rules)
+    ├── K7_AUTO_POWER_README.md            ← Detailed auto-power documentation (BLE, lead gate, all 19 rules)
     └── FIRMWARE_ANALYSIS.md               ← K7 firmware reverse engineering
 ```
 
@@ -398,20 +408,57 @@ cp openhab/transform/*.map  /etc/openhab/transform/
 | **DUMP_DONE** | OFF | Cycle complete, ready for next ride — ignition ON allowed (→ RIDING) |
 | **LOW_BATTERY** | OFF | Battery < 12.0V — relay forced off |
 
-### Rules (10 JSRules)
+### Rules
+
+**19 in two files**, counted from the source on 2026-09-12.
+
+`vehicle-motorcycle-k7-power.js` — 14:
 
 | # | Rule | Trigger |
 |---|------|---------|
 | 1 | System Init | Startup — relay OFF, state recovery |
-| 2 | Ignition Handler | Ignition changed — 5s debounce (1N4007 diode), DUMP_DONE → RIDING |
-| 3 | Voltage Monitor | ADC voltage changed — charger/low battery detect |
-| 4 | Dump Complete | Dump status changed — cooldown & relay OFF |
-| 5 | WiFi Poll | Cron (1 min) — Shelly SSID/RSSI |
-| 6 | Relay Tracker | Relay changed — timestamp tracking |
-| 7 | Manual Override | Relay command — manual dump trigger |
-| 8 | BLE Online | BLE Online changed — charger presence |
-| 9 | BLE Charge State | Charge state changed — Off→re-arm, Charging/Storage/Idle→start |
-| 10 | Connection Status | BLE items changed — MC_Charger_Connection string |
+| 2 | Ignition Handler | Ignition changed — 5 s debounce (1N4007 blocks back-feed) |
+| 3 | Voltage Monitor | Tracker battery changed — low battery only; charger detection is BLE's job now |
+| 4 | Dump Complete | Dump status changed — 30 s cooldown with the relay held ON, then OFF |
+| 5 | Manual Override | Relay command — manual dump trigger |
+| 6 | Shelly Status Poll | Cron 30 s — full status, and the heartbeat the on-device failsafe watches |
+| 7 | Relay Tracker | Relay changed — timestamp, counter-punch on unexpected ON |
+| 8 | BLE Online | BLE online changed — charger presence |
+| 9 | BLE Charge State | Charge state changed — starts the sequence from PARKED |
+| 10 | Connection Status | BLE + voltage/current — computes clamps-on-bike |
+| 11 | **Lead Connected** | Lead OFF→ON — resumes a sequence the missing lead had parked |
+| 12 | **Lead Disconnected** | Lead ON→OFF — aborts an in-flight dump, relay OFF |
+| 13 | Relay Safety Watchdog | Cron 2 min — four guards |
+| 14 | Baseline Learner | Charger current changed — self-calibrates the clamps delta |
+
+`vehicle-motorcycle-k7-lead.js` — 5:
+
+| # | Rule | Trigger |
+|---|------|---------|
+| 1 | Passive Sense | Cron 10 s — reads only while the relay is already closed |
+| 2 | Probe When Charger Connects | Charger arrival — one probe, 60 s guard |
+| 3 | Probe On Demand | REFRESH command |
+| 4 | Automatic While Charging | Cron :07 and :37 — **only while the lead is believed out** |
+| 5 | Test Button | Sitemap button — the only way to check at rest |
+
+> **Rule 4 will not probe when the lead is already in.** A probe closes the
+> relay, and with the lead connected that is also the signal that wakes the
+> camera. With the lead out there is no circuit, so a probe is completely
+> silent. It is free exactly when it has something to tell us.
+
+### Watchdog guards
+
+| Guard | Condition |
+|---|---|
+| 1 | Relay ON in PARKED, DUMP_DONE or LOW_BATTERY → force OFF |
+| 2 | Relay ON past the absolute ceiling → force OFF. State-independent |
+| 3 | Relay ON while the charger clamps are not proven on the bike → force OFF |
+| 4 | Relay ON while the garage lead is not connected → force OFF |
+
+> **COOLDOWN is deliberately absent from guard 1.** It is a state where the relay
+> is held ON for 30 s so the camera can close its files. Listing it there made
+> the watchdog fight that timer: 8 of 15 dumps were cut short, one to 7 seconds.
+> Fixed 2026-09-12 and verified on hardware at 30.003 s.
 
 ## Safety Features
 

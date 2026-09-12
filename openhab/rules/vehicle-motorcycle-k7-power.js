@@ -1459,7 +1459,27 @@ rules.JSRule({
       // Force the relay OFF but DO NOT re-arm: DUMP_DONE means footage is already
       // transferred, so re-arming could restart a pointless dump cycle. Keeping
       // the state simply leaves the relay off where it belongs.
-      var mustBeOff = [STATES.PARKED, STATES.DUMP_DONE, STATES.COOLDOWN, STATES.LOW_BATTERY];
+      // COOLDOWN is NOT in this list, and that is the point of it.
+      //
+      // Rule 4 puts the machine in COOLDOWN and deliberately LEAVES THE RELAY ON
+      // for COOLDOWN_S seconds so the camera can close its files and shut down
+      // cleanly; only then does its own timer open the relay and move to
+      // DUMP_DONE. Listing COOLDOWN here made the watchdog fight that timer.
+      //
+      // Measured 2026-09-12 across the logs still on disk: 8 of 15 dumps had
+      // their cooldown cut short. The run that evening gave the camera 7 seconds
+      // of the 30 it is supposed to get -- the watchdog ticks every two minutes,
+      // so it lands inside a 30 s window often enough to be the normal case
+      // rather than the rare one.
+      //
+      // Present since 2026-03-22 and invisible until the owner noticed the
+      // camera waking and asked why. Nothing alarms when a shutdown is rushed;
+      // it just costs the camera the time it needed.
+      //
+      // Safe to remove from the list: a COOLDOWN that never completes is still
+      // bounded by GUARD 2 below, which is state-independent and forces the
+      // relay off on RELAY_ABS_MAX_MIN regardless of how it got stuck.
+      var mustBeOff = [STATES.PARKED, STATES.DUMP_DONE, STATES.LOW_BATTERY];
       if (mustBeOff.indexOf(currentState) >= 0) {
         console.warn(LOG + ': WATCHDOG: Relay ON but state is ' + currentState + ' \u2014 forcing OFF');
         relayOff('WATCHDOG: relay ON in ' + currentState);

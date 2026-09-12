@@ -219,7 +219,31 @@ rules.JSRule({
     safeExecute(LOG + ' auto', function () {
       const c = items.getItem('MC_Secondary_Connected').state;
       if (c === null || c.toString() !== 'ON') return;   // charger clamps off: not our business
-      probe('automatic, charger connected');
+
+      // Already known connected? Then do not probe.
+      //
+      // A probe closes the relay, and with the lead IN that puts 12 V on the
+      // camera's ignition line and wakes it for the three seconds we hold the
+      // coil. With the lead OUT there is no circuit at all: no coil current, the
+      // contact never moves, and the camera cannot tell the probe happened.
+      //
+      // So the probe is free exactly when it has something to tell us, and costs
+      // a wake-up exactly when it does not. Gate on it.
+      //
+      // Found 2026-09-12, after the owner finished mounting the bike and watched
+      // the camera come on. This rule fires at :07 and :37 — 48 wake-ups a day
+      // on a camera meant to be asleep. The file's own comment two rules up
+      // rejects a 15-minute timer for doing it 96 times a day; this was the same
+      // mistake at half the rate, written directly underneath.
+      //
+      // Losing the lead while parked is still caught: the relay is open then, so
+      // nothing can run anyway, and the charger-arrival probe re-reads it before
+      // any dump is allowed to start. During a transfer the relay is closed, so
+      // the passive sense sees it go within ten seconds.
+      const known = items.getItem('MC_K7_Lead_Connected').state;
+      if (known !== null && known.toString() === 'ON') return;
+
+      probe('automatic, charger connected, lead believed out');
     });
   }
 });
