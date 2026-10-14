@@ -11,7 +11,7 @@
 > | Switching element | IRFP9140N P-channel MOSFET on the bike | **Omron G6S-2 relay**, coil fed from the garage down a two-core lead |
 > | Shelly ADC measures | The machine's battery voltage | **Current through a 100 Ω sense resistor** in the relay coil's return |
 > | Battery voltage source | The Shelly ADC | The GPS tracker's reading of the same battery |
-> | Charger detection fallback | ADC voltage thresholds | **Gone.** Victron BLE is the only sensor |
+> | Charger detection fallback | ADC voltage thresholds | **Same thresholds, on the tracker's battery voltage** (`Vehicle10_Power`). Only when BLE is offline |
 > | Parasitic draw on the machine | 80–110 mA for the Shelly | **Nothing.** Only the relay coil, and only while energised |
 > | New precondition | — | **The dump cannot start unless the garage lead is proven connected** |
 >
@@ -116,7 +116,7 @@ Automated K7 dashcam power control via Shelly Plus Uni and IRFP9140N P-channel M
 
 The INNOVV K7 has no remote power control — it only powers on via the ignition switch. This means footage can only be dumped while riding (engine running). With the Shelly Plus Uni:
 
-1. **Charger connected** → BLE confirms charging state (or Shelly ADC detects high voltage as fallback)
+1. **Charger connected** → BLE confirms charging state (or, with BLE offline, the tracker's battery voltage as fallback)
 2. **Relay turns ON** → K7 powers up and broadcasts its WiFi AP
 3. **Pi detects K7** → Downloads all new footage to NAS, verifies SHA-256, deletes from K7
 4. **Dump complete** → Shelly relay turns OFF, K7 shuts down
@@ -145,9 +145,9 @@ See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab)
 
 **Are the clamps on the bike?** "Connected" above only means mains. Whether the DC clamps are on the battery is `MC_Secondary_Connected`, from the daemon's Proof D: charge current can only flow in a closed circuit. A full battery in Storage can go hours without current, so after 4 h without a pulse the daemon **pricks** the charger — charge preset Normal → High → Normal (register `0xEDF1`), which restarts the cycle so a battery on the clamps takes current even when full. Only from Storage, at most every 12 h, always ending on Normal (read back). `MC_Charger_Prick` pricks by hand, `MC_Charger_Prick_Result` reports. See `victron-ble/README.md`, "The prick".
 
-### FALLBACK: Shelly ADC Voltage Thresholds
+### FALLBACK: Battery Voltage Thresholds (GPS tracker)
 
-When the BLE daemon is unavailable, the system falls back to Shelly ADC voltage:
+When the BLE daemon is unavailable, the system falls back to the bike battery's voltage as the GPS tracker reports it (`Vehicle10_Power`; the Shelly ADC until 2026-09-12, see the table at the top):
 
 - **V > 13.0V** (CHARGER_ON_V) → Charger connecting
 - **V < 12.7V** (CHARGER_OFF_V) → Charger removed
@@ -286,8 +286,8 @@ T+300s: Grace period expires. Voltage-only detection re-enabled.
 | Stabilisation delay | 60 seconds | Avoids false triggers from voltage spikes |
 | Safety timeout | 30 minutes | Prevents indefinite relay ON (battery drain) |
 | Low battery cutoff | 12.0V | Protects battery from deep discharge |
-| Charger ON threshold | 13.0V (raw ADC) | Detect charger connecting (fallback) |
-| Charger OFF threshold | 12.7V (raw ADC) | Confirm charger truly removed (fallback) |
+| Charger ON threshold | 13.0V (tracker) | Detect charger connecting (fallback) |
+| Charger OFF threshold | 12.7V (tracker) | Confirm charger truly removed (fallback) |
 | Ignition debounce | 5 seconds | Filters MOSFET back-feed false triggers to FMM920 (1N4007 diode installed 2026-03-12, debounce reduced from 30s to 5s) |
 | Post-dump cooldown | 30 seconds | Clean K7 shutdown after dump |
 | Re-arm grace period | 5 minutes | Suppresses voltage-only false retrigger after charger disconnect |
@@ -628,7 +628,7 @@ The Victron Blue Smart IP65 12/10 battery charger follows a multi-stage charging
 With BLE integration, charger stage transitions no longer cause false triggers. The BLE
 daemon reports the exact charge state, and the state machine trusts BLE over voltage.
 
-**Without BLE (voltage-only fallback):** Storage stage (~13.0V ADC) sits right at the
+**Without BLE (voltage-only fallback):** Storage stage (~13.0V) sits right at the
 CHARGER_ON_V threshold. Without hysteresis, this caused endless dump cycling.
 
 **With BLE (primary):** BLE confirms the charger is in Storage — state machine stays in

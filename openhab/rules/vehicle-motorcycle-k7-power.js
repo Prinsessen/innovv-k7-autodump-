@@ -7,8 +7,9 @@
 //             Polled every 30s by Pi daemon → MC_Charger_BLE_Online, MC_Charger_State
 //             100% accurate — no threshold guessing
 //
-//   FALLBACK: Shelly ADC voltage thresholds (CHARGER_ON_V / CHARGER_OFF_V)
-//             Only used when BLE daemon is unavailable
+//   FALLBACK: battery voltage thresholds (CHARGER_ON_V / CHARGER_OFF_V) on the
+//             GPS tracker's reading (Vehicle10_Power, batteryVolts()) - the Shelly
+//             ADC until 2026-09-12. Only used when the BLE daemon is unavailable
 //
 // Victron Blue Smart IP65 12/10 charge profile (BLE-verified 2026-03-12):
 //   Bulk:        voltage rising toward 14.4V, max current

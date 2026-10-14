@@ -87,14 +87,18 @@ The system uses **two independent sensors** to detect charger presence, eliminat
 | Sensor | Role | How |
 |--------|------|-----|
 | **Victron BLE** (primary) | Reads actual charger state | Pi daemon connects via BLE GATT every 30s |
-| **Shelly ADC** (fallback) | Voltage threshold detection | >13.0V = charger, <12.7V = removed |
+| **Battery voltage** (fallback, only when BLE is offline) | Voltage threshold detection | The GPS tracker's reading of the bike battery (`Vehicle10_Power`): >13.0V = charger, <12.7V = removed |
+
+Until 2026-09-12 the fallback voltage came from the Shelly's ADC across the battery. Since the Shelly moved into the garage it measures the relay coil's current instead, and the battery voltage comes from the tracker - checked side by side first: 13.17 V on the ADC, 13.174 V on the tracker.
 
 **Three detection tiers:**
 1. `isBLECharging()` — Active charging (Bulk/Absorption/Float/Recondition)
 2. `isBLEConnected()` — Charger connected (above + Storage/Idle — full battery goes to Storage)
-3. Voltage > 13.0V — Fallback when BLE offline
+3. Battery voltage > 13.0V — Fallback when BLE is offline
 
 **Why dual-sensor?** Voltage alone is unreliable — the charger's Storage stage (~13.0V) sits right at the detection threshold, and battery voltage lingers above 13.0V for minutes after charger removal. BLE provides the ground truth.
+
+These tiers answer "is the charger on mains and charging?". Whether its clamps are actually on the bike is a separate question — see [Clamp-on-Bike Detection](#clamp-on-bike-detection-drain-prevention) below.
 
 See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab) repository for the BLE daemon.
 
