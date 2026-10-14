@@ -45,6 +45,12 @@ copy "$LIVE/automation/js/vehicle-motorcycle-k7-lead.js"        "$HERE/openhab/r
 copy "$LIVE/automation/js/vehicle-motorcycle-ignition.js"       "$HERE/openhab/rules/vehicle-motorcycle-ignition.js"
 copy "$LIVE/automation/js/vehicle-motorcycle-k7-charge-history.js" "$HERE/openhab/rules/vehicle-motorcycle-k7-charge-history.js"
 copy "$LIVE/shelly-scripts/k7-failsafe.js"                      "$HERE/shelly-scripts/k7-failsafe.js"
+# The Victron BLE daemon the Pi runs (deployed from $LIVE/victron-ble to the Pi by hand,
+# so this is the code on the Pi): added 2026-10-14 with the charge-preset prick.
+copy "$LIVE/victron-ble/victron_ble_monitor.py"                 "$HERE/victron-ble/victron_ble_monitor.py"
+copy "$LIVE/victron-ble/README.md"                              "$HERE/victron-ble/README.md"
+copy "$LIVE/victron-ble/victron-ble-monitor.service"            "$HERE/victron-ble/victron-ble-monitor.service"
+copy "$LIVE/victron-ble/requirements.txt"                       "$HERE/victron-ble/requirements.txt"
 
 echo
 echo "Now run:  ./tools/check-public.sh --all"

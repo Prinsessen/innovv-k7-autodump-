@@ -55,7 +55,7 @@
 // Device: shellyplusuni-a1b2c3d4e5f6  IP: 192.168.1.62  FW: 1.7.4
 // Thing:  shelly:shellyplusuni:a1b2c3d4e5f6
 // =============================================================================
-Group    gMC_K7_Power               "K7 Auto-Power"                                  <energy>               (gK7)          ["Equipment"]
+Group    gMC_K7_Power               "K7 Auto-Power (box in the garage)"              <energy>               (GA_Bil)       ["PowerOutlet"]
 // --- Shelly Plus Uni Channels ---
 // Device: shellyplusuni-a1b2c3d4e5f6  IP: 192.168.1.62  MAC: A1B2C3D4E5F6
 // MIGRATED 2026-03-26: Shelly binding broken (handleCommand never fires in 5.1.3)
@@ -69,10 +69,10 @@ Switch   MC_K7_Relay                "K7 Power Relay [MAP(k7_onoff.map):%s]"     
 // reads a constant 0.27 V low, confirmed at both 13 V and 1.1 V, so everything
 // below 0.27 V of true voltage clamps to zero — which makes the two states
 // cleaner, not worse. Battery voltage now comes from Vehicle10_Power.
-Number   MC_K7_Sense_Voltage        "Coil sense [%.3f V]"                            <k7-battery-green>     (gMC_K7_Power) ["Measurement"]
+Number   MC_K7_Sense_Voltage        "Coil sense [%.3f V]"                            <k7-battery-green>     (gMC_K7_Power) ["Measurement", "Voltage"]
 // Kept under its old name so nothing downstream silently loses its sensor during
 // the migration. Retire it once every consumer has moved; see the item above.
-Number   MC_K7_Shelly_Voltage       "Coil sense, legacy name [%.3f V]"               <k7-battery-green>     (gMC_K7_Power) ["Measurement"]
+Number   MC_K7_Shelly_Voltage       "Coil sense, legacy name [%.3f V]"               <k7-battery-green>     (gMC_K7_Power) ["Measurement", "Voltage"]
 // Is the garage-to-machine lead actually connected?
 //
 // It cannot be answered while the relay is open — with no current there is
@@ -91,37 +91,37 @@ Switch   MC_K7_Lead_Connected       "Garage lead [MAP(k7_lead.map):%s]"         
 // Momentary: it resets itself, because a switch that stays on invites being read
 // as a mode rather than a button.
 Switch   MC_K7_Lead_Test            "Test lead now"                                  <k7-sync-blue>         (gMC_K7_Power) ["Switch"] {autoupdate="false"}
-DateTime MC_K7_Lead_Checked         "Lead last proven [%1$td.%1$tm %1$tH:%1$tM]"     <time>                 (gMC_K7_Power) ["Status"]
+DateTime MC_K7_Lead_Checked         "Lead last proven [%1$td.%1$tm %1$tH:%1$tM]"     <clock-schedule-blue>                 (gMC_K7_Power) ["Status", "Timestamp"]
 // --- Shelly Device Status (HTTP-polled) ---
-Number   MC_K7_Shelly_WiFi_Signal   "Shelly WiFi [%d /4]"                            <network>              (gMC_K7_Power) ["Measurement"]
-Number   MC_K7_Shelly_Uptime        "Shelly Uptime [%.0f s]"                         <time>                 (gMC_K7_Power) ["Measurement"]
-DateTime MC_K7_Shelly_LastUpdate    "Shelly Last Update [%1$td.%1$tm %1$tH:%1$tM]"   <time>                 (gMC_K7_Power) ["Status"]
-DateTime MC_K7_Shelly_Heartbeat     "Shelly Heartbeat [%1$td.%1$tm %1$tH:%1$tM]"     <time>                 (gMC_K7_Power) ["Status"]
+Number   MC_K7_Shelly_WiFi_Signal   "Shelly WiFi [%d /4]"                            <network>              (gMC_K7_Power) ["Measurement", "SignalStrength"]
+Number   MC_K7_Shelly_Uptime        "Shelly Uptime [%.0f s]"                         <clock-schedule-blue>                 (gMC_K7_Power) ["Measurement", "Duration"]
+DateTime MC_K7_Shelly_LastUpdate    "Shelly Last Update [%1$td.%1$tm %1$tH:%1$tM]"   <clock-schedule-blue>                 (gMC_K7_Power) ["Status", "Timestamp"]
+DateTime MC_K7_Shelly_Heartbeat     "Shelly Heartbeat [%1$td.%1$tm %1$tH:%1$tM]"     <clock-schedule-blue>                 (gMC_K7_Power) ["Status", "Timestamp"]
 // --- Shelly API-polled Items (updated via JS rule) ---
-Number   MC_K7_Shelly_RSSI          "Shelly RSSI [%d dBm]"                           <network>              (gMC_K7_Power) ["Measurement"]
-String   MC_K7_Shelly_SSID          "Shelly SSID [%s]"                               <network>              (gMC_K7_Power) ["Status"]
+Number   MC_K7_Shelly_RSSI          "Shelly RSSI [%d dBm]"                           <network>              (gMC_K7_Power) ["Measurement", "RSSI"]
+String   MC_K7_Shelly_SSID          "Shelly SSID [%s]"                               <network>              (gMC_K7_Power) ["Status", "Info"]
 // --- Virtual State Items (no channel binding) ---
-String   MC_K7_Power_State          "K7 Power State [%s]"                            <status>               (gMC_K7_Power) ["Status"]
+String   MC_K7_Power_State          "K7 Power State [%s]"                            <status>               (gMC_K7_Power) ["Status", "Power"]
 Switch   MC_Charger_Detected        "Charger Detected [MAP(k7_onoff.map):%s]"        <k7-charger-green>     (gMC_K7_Power) ["Status"]
-String   MC_K7_Power_Reason         "Power Reason [%s]"                              <text>                 (gMC_K7_Power) ["Status"]
-DateTime MC_K7_Relay_Since          "Relay ON Since [%1$tF %1$tR]"                   <time>                 (gMC_K7_Power) ["Status"]
+String   MC_K7_Power_Reason         "Power Reason [%s]"                              <text>                 (gMC_K7_Power) ["Status", "Power"]
+DateTime MC_K7_Relay_Since          "Relay ON Since [%1$tF %1$tR]"                   <clock-schedule-blue>                 (gMC_K7_Power) ["Status", "Timestamp"]
 // --- Victron Blue Smart IP65 12/10 Charger (BLE GATT via Pi4) ---
 // Pi4 daemon connects via BLE GATT 306b service, reads Victron registers,
 // and posts values to openHAB REST API every 30s.
 // BLE radio is active when charger has mains power. BLE Online ≠ charging:
 //   Online + Idle/Off = mains power but battery cable not connected
 //   Online + Bulk/Absorption/Float/Storage = actively charging
-// BLE address: EB:A8:21:DD:9C:A0 (paired+bonded with Pi4)
+// BLE address: XX:XX:XX:XX:XX:XX (paired+bonded with Pi4)
 Switch   MC_Charger_BLE_Online      "Charger BLE [MAP(k7_onoff.map):%s]"             <bluetooth>            (gMC_K7_Power) ["Status"]
-Number   MC_Charger_BLE_RSSI        "BLE Signal [%d dBm]"                            <victron-rssi-blue-v1> (gMC_K7_Power) ["Measurement"]
-String   MC_Charger_BLE_Signal      "BLE Signal [%s]"                                <victron-rssi-blue-v1> (gMC_K7_Power) ["Status"]
-String   MC_Charger_Connection      "Charger [%s]"                                   <network>              (gMC_K7_Power) ["Status"]
-Number   MC_Charger_Voltage         "Charger Voltage [%.2f V]"                       <energy>               (gMC_K7_Power) ["Measurement"]
-Number   MC_Charger_Current         "Charger Current [%.2f A]"                       <energy>               (gMC_K7_Power) ["Measurement"]
-Number   MC_Charger_Current_mA      "Charger Current [%d mA]"                        <energy>               (gMC_K7_Power) ["Measurement"]
-Number   MC_Charger_Yield           "Charged Energy [%.3f kWh]"                      <energy>               (gMC_K7_Power) ["Measurement"]
-String   MC_Charger_State           "Charger State [%s]"                             <heating>              (gMC_K7_Power) ["Status"]
-DateTime MC_Charger_Last_Update     "Charger Updated [%1$td.%1$tm %1$tH:%1$tM]"      <time>                 (gMC_K7_Power) ["Status"]
+Number   MC_Charger_BLE_RSSI        "BLE Signal [%d dBm]"                            <victron-rssi-blue-v1> (gMC_K7_Power) ["Measurement", "RSSI"]
+String   MC_Charger_BLE_Signal      "BLE Signal [%s]"                                <victron-rssi-blue-v1> (gMC_K7_Power) ["Status", "SignalStrength"]
+String   MC_Charger_Connection      "Charger [%s]"                                   <network>              (gMC_K7_Power) ["Status", "Info"]
+Number   MC_Charger_Voltage         "Charger Voltage [%.2f V]"                       <energy>               (gMC_K7_Power) ["Measurement", "Voltage"]
+Number   MC_Charger_Current         "Charger Current [%.2f A]"                       <energy>               (gMC_K7_Power) ["Measurement", "Current"]
+Number   MC_Charger_Current_mA      "Charger Current [%d mA]"                        <energy>               (gMC_K7_Power) ["Measurement", "Current"]
+Number   MC_Charger_Yield           "Charged Energy [%.3f kWh]"                      <energy>               (gMC_K7_Power) ["Measurement", "Energy"]
+String   MC_Charger_State           "Charger State [%s]"                             <heating>              (gMC_K7_Power) ["Status", "Info"]
+DateTime MC_Charger_Last_Update     "Charger Updated [%1$td.%1$tm %1$tH:%1$tM]"      <clock-schedule-blue>                 (gMC_K7_Power) ["Status", "Timestamp"]
 // --- Secondary-Connection Detection (drain prevention, added 2026-08-06) ---
 // The Victron charger sits permanently on 230V mains. Its BLE "state" label
 // (Storage/Float/Idle) is IDENTICAL whether the DC clamps are on the bike or
@@ -143,7 +143,7 @@ Switch   MC_Secondary_Connected     "Secondary Connected [MAP(k7_connected.map):
 // Short human reason naming the proof that decided the clamp state, e.g.
 // "Proof D — current seen", "Proof B — 0.35 A", "Off — no current (Proof D)".
 // Set by updateChargerConnection() in vehicle-motorcycle-k7-power.js.
-String   MC_Secondary_Reason        "Clamp Detection [%s]"                           <text>                 (gMC_K7_Power) ["Status"]
+String   MC_Secondary_Reason        "Clamp Detection [%s]"                           <text>                 (gMC_K7_Power) ["Status", "Info"]
 // --- Proof D: Secondary-Connection via BLE Data Richness (added 2026-08-09) ---
 // The charger exposes NO 'secondary connected' register (Victron-confirmed;
 // 0xEDD5/0xEDD7 proved to be plain mirrors in a live clamp on/off A/B test).
@@ -157,15 +157,22 @@ String   MC_Secondary_Reason        "Clamp Detection [%s]"                      
 // only and are no longer shown on the sitemap.
 Number   MC_Charger_Reg_Count       "BLE Registers/Cycle [%d]"                       <energy>               (gMC_K7_Power) ["Measurement"]
 Number   MC_Charger_Data_Bytes      "BLE Data/Cycle [%d B]"                          <energy>               (gMC_K7_Power) ["Measurement"]
-String   MC_Charger_Secondary_Proof "Proof D (Clamps) [%s]"                          <network>              (gMC_K7_Power) ["Status"]
+String   MC_Charger_Secondary_Proof "Proof D (Clamps) [%s]"                          <network>              (gMC_K7_Power) ["Status", "Info"]
+// The prick (2026-10-14): when Proof D falls to Off?/Uncertain the daemon switches the
+// charge preset Normal -> High -> Normal (register 0xEDF1), which restarts the cycle; a
+// battery on the clamps then takes current even when full. Automatic at most every 12 h;
+// MC_Charger_Prick ON = prick on the next cycle (the daemon switches it back OFF).
+// victron-ble/README.md "Writing: the charge preset restarts the cycle".
+Switch   MC_Charger_Prick           "Probe charger now"                              <victron-charger-blue> (gMC_K7_Power) ["Control"]
+String   MC_Charger_Prick_Result    "Last charger probe [%s]"                        <victron-state-teal>   (gMC_K7_Power) ["Status", "Info"]
 // --- Charge Session History (persisted to InfluxDB) ---
 // Updated by vehicle-motorcycle-k7-charge-history.js on each charge cycle.
-DateTime MC_Charge_Session_Start    "Session Start [%1$td.%1$tm %1$tH:%1$tM]"        <time>                 (gMC_K7_Power) ["Status"]
-DateTime MC_Charge_Session_End      "Session End [%1$td.%1$tm %1$tH:%1$tM]"          <time>                 (gMC_K7_Power) ["Status"]
-Number   MC_Charge_Session_Minutes  "Session Duration [%.0f min]"                    <time>                 (gMC_K7_Power) ["Measurement"]
-Number   MC_Charge_Session_V_Start  "Start Voltage [%.2f V]"                         <energy>               (gMC_K7_Power) ["Measurement"]
-Number   MC_Charge_Session_V_End    "End Voltage [%.2f V]"                           <energy>               (gMC_K7_Power) ["Measurement"]
-Number   MC_Charge_Session_V_Delta  "Voltage Change [%.2f V]"                        <energy>               (gMC_K7_Power) ["Measurement"]
-Number   MC_Charge_Session_Wh       "Energy Charged [%.1f Wh]"                       <energy>               (gMC_K7_Power) ["Measurement"]
-String   MC_Charge_Session_Peak     "Peak Stage [%s]"                                <energy>               (gMC_K7_Power) ["Status"]
+DateTime MC_Charge_Session_Start    "Session Start [%1$td.%1$tm %1$tH:%1$tM]"        <clock-schedule-blue>                 (gMC_K7_Power) ["Status", "Timestamp"]
+DateTime MC_Charge_Session_End      "Session End [%1$td.%1$tm %1$tH:%1$tM]"          <clock-schedule-blue>                 (gMC_K7_Power) ["Status", "Timestamp"]
+Number   MC_Charge_Session_Minutes  "Session Duration [%.0f min]"                    <clock-schedule-blue>                 (gMC_K7_Power) ["Measurement"]
+Number   MC_Charge_Session_V_Start  "Start Voltage [%.2f V]"                         <energy>               (gMC_K7_Power) ["Measurement", "Voltage"]
+Number   MC_Charge_Session_V_End    "End Voltage [%.2f V]"                           <energy>               (gMC_K7_Power) ["Measurement", "Voltage"]
+Number   MC_Charge_Session_V_Delta  "Voltage Change [%.2f V]"                        <energy>               (gMC_K7_Power) ["Measurement", "Voltage"]
+Number   MC_Charge_Session_Wh       "Energy Charged [%.1f Wh]"                       <energy>               (gMC_K7_Power) ["Measurement", "Energy"]
+String   MC_Charge_Session_Peak     "Peak Stage [%s]"                                <energy>               (gMC_K7_Power) ["Status", "Power"]
 Number   MC_Charge_Session_Count    "Total Sessions [%.0f]"                          <none>                 (gMC_K7_Power) ["Measurement"]

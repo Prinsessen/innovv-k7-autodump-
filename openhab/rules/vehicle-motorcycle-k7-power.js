@@ -105,10 +105,12 @@ const WATCHDOG_INTERVAL_S = 300;  // Relay watchdog every 5 minutes
 // riding, or a stale BLE reading). Gating on home removes an entire class of
 // false triggers AND the confusing "travel regime" seen in historical data.
 // Two independent home sources, combined with OR for maximum robustness:
-//   ESP_Springfield_Home  - the bike's own Shelly BLE beacon seen ONLY by the
-//                           garage ESP32 node (strongest signal, GPS-immune)
+//   ESP_Springfield_Home  - the Ebeoo iBeacon on the bike seen by the garage
+//                           ESP32 node (GPS-immune; since 2026-10-14 - before
+//                           that the Shelly, which now sits in the Pi's box in
+//                           the garage and so always read "home")
 //   Vehicle10_GeofenceName - Traccar GPS geofence "…Kirkegade 50" (backup if
-//                           the Shelly BLE fails to connect, which it sometimes does)
+//                           the garage node misses the beacon)
 // OR is safe here: "home" never turns the relay on by itself — the charger
 // still has to be BLE-present with a real secondary connection. Home is a
 // defence-in-depth gate, not the trigger.
@@ -379,7 +381,7 @@ function rearmToParked(reason) {
 // isHome() — is the motorcycle physically home in the garage?
 // ---------------------------------------------------------------------------
 // Returns true if EITHER home source says home (OR = robust against a single
-// source failing; the Shelly BLE beacon occasionally fails to connect, and GPS
+// source failing; the garage node can miss the bike's iBeacon, and GPS
 // occasionally loses fix indoors — either alone is enough to confirm home).
 // Fail-safe default is FALSE: if neither can be read we treat the bike as
 // away, which only means "don't auto-power the K7" — the battery-safe choice.
