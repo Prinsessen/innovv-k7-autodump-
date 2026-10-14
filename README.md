@@ -126,7 +126,7 @@ So when Proof D falls to `Uncertain`/`Off?`, the daemon pricks once — **only f
 
 | Component | Model | Role |
 |-----------|-------|------|
-| Shelly Plus Uni | SNSN-0043X (Gen 2) | Relay control + ADC sensing. **In the garage, on mains** — not on the machine |
+| Shelly Plus Uni | SNSN-0043X (Gen 2) | Drives the relay coil, and its ADC reads the 100 Ω sense resistor (lead connected or not). **In the box with the Pi, on mains** — not on the machine; the box goes wherever the machine is kept (garage, or indoors for the winter) |
 | Signal relay | Omron `G6S-2 DC12` (DPDT, 1 kΩ coil) | On the machine. Drives the camera's ignition line; the coil is fed from the garage |
 | 100 Ω resistor | 1/4 W | Sense resistor in the coil's return leg — this is what makes the lead detectable |
 | Two-core lead | 2 × 0.5 mm², numbered cores | Garage to machine. Carries the coil current and reports that it is connected |
@@ -134,9 +134,10 @@ So when Proof D falls to `Uncertain`/`Off?`, the daemon pricks once — **only f
 | Blocking diode | 1N4007 (1A/1000V) | **INSTALLED** — blocks back-feed from the switched ignition line into the ignition circuit |
 | INNOVV K7 | Dual-channel dashcam | Records front + rear video |
 | Raspberry Pi 3 | Any RAM variant | Runs dump service + BLE monitor |
-| Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Primary charger detection via BLE |
+| Victron Blue Smart IP65 12/10 | BLE-enabled battery charger | Primary charger detection via BLE, and clamp-on-bike detection (Proof D, the prick) |
 | ALFA AWUS036ACM | MT7612U, AC1200, USB 3.0 | 5GHz WiFi to K7 AP |
-| GPS tracker | e.g. Teltonika FMM920 (optional) | Ignition state for state machine |
+| GPS tracker | e.g. Teltonika FMM920 | Ignition state for the state machine; the battery voltage for the charger fallback (`Vehicle10_Power`); the home geofence for `isHome()` |
+| BLE beacon + ESPresense | e.g. Ebeoo Beacon Pro (iBeacon, own coin cell) on the machine; ESP32 ESPresense nodes in the rooms | Machine-at-home for `isHome()`, independent of GPS (indoors the tracker may have no fix) |
 
 ## Switching circuit
 
