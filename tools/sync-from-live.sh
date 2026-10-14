@@ -51,6 +51,16 @@ copy "$LIVE/victron-ble/victron_ble_monitor.py"                 "$HERE/victron-b
 copy "$LIVE/victron-ble/README.md"                              "$HERE/victron-ble/README.md"
 copy "$LIVE/victron-ble/victron-ble-monitor.service"            "$HERE/victron-ble/victron-ble-monitor.service"
 copy "$LIVE/victron-ble/requirements.txt"                       "$HERE/victron-ble/requirements.txt"
+# Added 2026-10-14 after both had drifted: the dump service's items, and the icons
+# this tree already carries (by name - a new icon is added here on purpose, not by glob).
+copy "$LIVE/items/innovv_k7.items"                              "$HERE/openhab/items/innovv_k7.items"
+for icon in "$HERE"/openhab/icons/*.svg; do
+  copy "$LIVE/icons/classic/$(basename "$icon")"                "$icon"
+done
+# Deliberately NOT synced: openhab/things/shelly.things (the live file holds every Shelly in
+# the house, with credentials - the copy here is a hand-made extract of the K7 one) and
+# openhab/rules/vehicle-motorcycle-k7-notify.js (the public version notifies through
+# myopenHAB instead of the private mail/SMS helpers and secrets).
 
 echo
 echo "Now run:  ./tools/check-public.sh --all"

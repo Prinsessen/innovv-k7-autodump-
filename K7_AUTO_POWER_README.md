@@ -143,6 +143,8 @@ A Pi 3 daemon (`victron-ble-monitor`) connects to the Victron Blue Smart IP65 12
 
 See the [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab) repository for full BLE daemon documentation.
 
+**Are the clamps on the bike?** "Connected" above only means mains. Whether the DC clamps are on the battery is `MC_Secondary_Connected`, from the daemon's Proof D: charge current can only flow in a closed circuit. A full battery in Storage can go hours without current, so after 4 h without a pulse the daemon **pricks** the charger — charge preset Normal → High → Normal (register `0xEDF1`), which restarts the cycle so a battery on the clamps takes current even when full. Only from Storage, at most every 12 h, always ending on Normal (read back). `MC_Charger_Prick` pricks by hand, `MC_Charger_Prick_Result` reports. See `victron-ble/README.md`, "The prick".
+
 ### FALLBACK: Shelly ADC Voltage Thresholds
 
 When the BLE daemon is unavailable, the system falls back to Shelly ADC voltage:
@@ -704,7 +706,7 @@ version could not survive the move.
 | `MC_K7_Power_Reason` | String | Human-readable reason for state |
 | `MC_K7_Relay_Since` | DateTime | When relay was last turned ON |
 
-### Victron BLE Charger Items (via Pi daemon REST API) (8 items)
+### Victron BLE Charger Items (via Pi daemon REST API) (10 items)
 
 | Item | Type | Purpose |
 |------|------|---------|
@@ -716,6 +718,8 @@ version could not survive the move.
 | `MC_Charger_Yield` | Number | Charged energy today (kWh) |
 | `MC_Charger_State` | String | Charge state: Off/Idle/Bulk/Absorption/Float/Storage/Recondition |
 | `MC_Charger_Last_Update` | DateTime | Last successful BLE data update |
+| `MC_Charger_Prick` | Switch | ON = prick the charger on the next cycle (manual); the daemon switches it back OFF |
+| `MC_Charger_Prick_Result` | String | What the last prick did and what it proved |
 
 ### Charge Session Items (via Pi BLE daemon REST API) (9 items)
 

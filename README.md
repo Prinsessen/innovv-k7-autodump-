@@ -104,11 +104,17 @@ The charger sits permanently on 230V mains, so "BLE online" says nothing about w
 
 | Proof | Signal | Why it's trusted |
 |-------|--------|------------------|
-| **D** (primary) | Charge-current registers seen in the daemon's recent BLE cycles (`MC_Charger_Secondary_Proof`) | Current can only flow through a **closed circuit** — a hard physical fact. Holds even at a full battery, where the charger keeps a small maintenance current. |
+| **D** (primary) | Charge-current registers seen in the daemon's recent BLE cycles (`MC_Charger_Secondary_Proof`) | Current can only flow through a **closed circuit** — a hard physical fact. A full battery in Storage pulses only rarely; a pulse is remembered for 4 h, and after that the daemon **pricks** the charger (below). |
 | **B** (fallback) | Instantaneous current ≥ 0.10 A | Used only in the brief window before the daemon has posted Proof D. |
 | **A** (last resort) | Self-calibrated `|ChargerV − BatteryV|` delta vs a learned baseline | Only when Proof D is unknown/settling. Note: the delta method false-reads "connected" at a full battery, which is exactly why Proof D leads. |
 
 Gated by `isHome()` (bike present via BLE beacon or GPS geofence) and a generator-rejection guard (battery driven far above the charger setpoint = engine alternator, not the charger). The deciding proof is surfaced in the UI as `MC_Secondary_Reason` (e.g. "Proof D — current seen", "Off — no current (Proof D)").
+
+### The prick (2026-10-14)
+
+A full battery in Storage can go hours without taking any current, and once the 4 h pulse memory runs out Proof D can no longer tell clamps-on from clamps-off — the "connect the charger" reminder then fired with the charger connected. The IP65 cannot be switched off over BLE, but its **charge preset** can be set (register `0xEDF1`, captured from VictronConnect with an Android HCI snoop log), and Normal → High → Normal restarts the charge cycle. A battery on the clamps then takes 100–400 mA even when full; with the clamps off nothing can flow.
+
+So when Proof D falls to `Uncertain`/`Off?`, the daemon pricks once — **only from Storage** (from Absorption a prick cannot raise the voltage and proves nothing), at most every 12 h, only when the preset reads Normal, and always ending on Normal, read back. `MC_Charger_Prick` pricks by hand; `MC_Charger_Prick_Result` says what happened. Details: [victron-ble/README.md](victron-ble/README.md#the-prick-added-2026-10-14).
 
 > **Proof D background:** the charger exposes no "secondary connected" characteristic (Victron-confirmed; the `0xEDD5`/`0xEDD7` registers proved to be plain mirrors of the main voltage/current in a live clamp on/off A/B test). The reliable discriminator is simply *whether current is flowing*, which the daemon derives from the BLE register stream.
 
@@ -307,6 +313,14 @@ innovv-k7-autodump/
 │       └── k7_lead.map                    ← Garage lead display mapping
 ├── shelly-scripts/
 │   └── k7-failsafe.js                     ← On-device failsafe. Heartbeat watchdog, no voltage thresholds
+├── victron-ble/
+│   ├── victron_ble_monitor.py             ← Pi BLE daemon for the Victron charger: state, Proof D, the prick
+│   ├── victron-ble-monitor.service        ← systemd unit
+│   ├── requirements.txt
+│   └── README.md                          ← Protocol, registers, Proof D, the prick
+├── tools/
+│   ├── sync-from-live.sh                  ← The only way the copies here are updated (redacts as it copies)
+│   └── check-public.sh                    ← Leak scan before every push (patterns live outside the repo)
 └── docs/
     ├── K7_AUTO_POWER_README.md            ← Detailed auto-power documentation (BLE, lead gate, all 19 rules)
     └── FIRMWARE_ANALYSIS.md               ← K7 firmware reverse engineering
@@ -517,7 +531,8 @@ Copy `pi-software/config.example.json` to `config.json` and edit:
 - [Auto-Power Documentation](docs/K7_AUTO_POWER_README.md) — switching circuit, dual-sensor BLE integration, state machine, all rules
 - [K7 Firmware Analysis](docs/FIRMWARE_ANALYSIS.md) — Reverse engineering of the K7 firmware (Novatek NA51055, RTL8821CS WiFi, CarDV HTTP API)
 - [Novatek NT9666x WiFi Command User Guide](docs/NT9666x-WiFi-Command-User-Guide.pdf) — Official Novatek CarDV HTTP API reference (the `cmd=NNNN` commands used by this project, e.g. 3017 free space, 3024 card status)
-- [Victron BLE Monitor](https://github.com/Prinsessen/victron-ble-openhab) — Standalone BLE daemon for the Victron charger
+- [Victron BLE Monitor](victron-ble/README.md) — the daemon the Pi runs: BLE protocol, Proof D clamp detection, the charge-preset prick
+- [victron-ble-openhab](https://github.com/Prinsessen/victron-ble-openhab) — the same daemon as a standalone repository
 
 ## Related Projects
 

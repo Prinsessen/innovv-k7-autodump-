@@ -71,8 +71,11 @@ Not used, never write them: Normal + recondition, High + recondition (~16 V), Li
 Switching Normal -> High -> Normal restarts the charge algorithm: Storage -> Bulk -> Absorption.
 Proven with the owner watching the LEDs: a **full** battery in Storage (13.4 V, 0 mA) then took
 110-420 mA at 14.6 V, and Proof D said "current seen" - which is the clamp-on proof the passive
-detection cannot get from a full battery (see "Secondary connection" below). With the clamps
-off, no current can flow. Always end on Normal and read `0xEDF1` back.
+detection cannot get from a full battery. With the clamps off, no current can flow. The daemon
+uses this as **the prick** - see "The prick" under Proof D below.
+
+Each write is acknowledged with the new value (`...080019edf14102`), and a GET returns
+`080019edf141<value>`, so every step can be read back.
 
 > **Note:** Register `0xEDD4` (native charger state) is NOT available over BLE GATT on this charger model. Explicit GET requests return error responses. The "Instant Readout" BLE advertisement feature is also not available on the Blue Smart IP65.
 
@@ -193,6 +196,8 @@ Defined in `items/motorcycle_k7_power.items`:
 | `MC_Secondary_Connected` | Switch | Boolean clamp truth derived from Proof D (consumed by the JS rule) |
 | `MC_Charger_Reg_Count` | Number | BLE registers/cycle (A/B-test evidence, InfluxDB history only) |
 | `MC_Charger_Data_Bytes` | Number | BLE data bytes/cycle (A/B-test evidence, InfluxDB history only) |
+| `MC_Charger_Prick` | Switch | ON = prick on the next cycle (manual); the daemon switches it back OFF |
+| `MC_Charger_Prick_Result` | String | What the last prick did and what it proved, e.g. "14/10 21:05 current seen - clamps on the bike" |
 
 ### Sitemap
 
@@ -212,6 +217,8 @@ All configuration is at the top of `victron_ble_monitor.py`:
 | `MAX_RETRIES` | `2` | Retries per poll cycle |
 | `CURRENT_MEMORY_SEC` | `14400` | Proof D: hold "Connected" this long after a current pulse (4 h) |
 | `STARTUP_GRACE_SEC` | `3600` | Proof D: optimistic "Connected" window after a restart (1 h) |
+| `PRICK_MIN_INTERVAL_SEC` | `43200` | The prick: automatic pricks at most every 12 h |
+| `PRICK_EVAL_SEC` | `600` | The prick: current must show within 10 min to prove the clamps on |
 
 ### Charge Profile Setpoints
 
@@ -296,6 +303,46 @@ clamps-off at restart is still caught soon after (comparable to the 30-min
 reminder grace), and never masks a mains loss — the offline path reports
 `Offline` before the grace is reached.
 
+### The prick (added 2026-10-14)
+
+**Problem:** the memory only bridges gaps. When a full battery sits in Storage
+for more than `CURRENT_MEMORY_SEC` without a pulse, the verdict falls to
+`Uncertain`/`Off?` with the clamps still on, and the reminder fires falsely
+("Springfield — Husk Laderen!"). Every proof above is passive, and with 230 V
+always on nothing ever happens to measure.
+
+**Fix:** make something happen. The charger cannot be switched off over BLE,
+but its charge preset can be set (register `0xEDF1`, see "Writing" above), and
+Normal -> High -> Normal restarts the cycle. A battery on the clamps then takes
+100-400 mA even when full, which the next cycles see as `current seen`. With the
+clamps off there is no circuit and no current.
+
+**When the daemon pricks:**
+
+| Condition | Why |
+|-----------|-----|
+| Verdict is `Uncertain` or `Off?` | Only when in doubt — a `Connected` verdict needs no prick |
+| Charger state is **Storage** | From Absorption (14.4-14.7 V) a prick cannot raise the voltage, so a full battery takes nothing and "no current" proves nothing. Seen on the first manual test: the clamps were on, the charger was in Absorption, and the result wrongly said "clamps off" |
+| Last prick more than 12 h ago | Each prick gives a full battery a short extra Absorption; the charger does one a week by itself |
+| `MC_Charger_Prick` ON | A manual prick, any state — the result says "not conclusive" unless it was made from Storage |
+
+**Safety:** the prick reads the preset first and leaves the charger alone
+unless it reads **Normal**. It writes High, reads it back, writes Normal, reads
+it back, and writes Normal again if the read-back is anything else (reported as
+`ALERT` in the result). Recondition and Li-ion are never written. One short BLE
+connection (the charger drops links after ~12 s; keepalive every 1 s).
+
+**Results** in `MC_Charger_Prick_Result`:
+
+| Result | Meaning |
+|--------|---------|
+| `… pricked (auto, from Storage) - watching for current` | Done, waiting up to `PRICK_EVAL_SEC` |
+| `… current seen - clamps on the bike` | Proof D also turns `Connected (current seen)` — reminder cancelled |
+| `… no current after the prick - clamps off` | From Storage: the clamps are off, the reminder is right |
+| `… no current - not conclusive, charger was in X` | A manual prick from another state |
+| `… skipped - preset reads N, not Normal; left alone` | Someone set another preset; the daemon does not touch it |
+| `… ALERT - preset reads N after the prick, not Normal` | Check the charger in VictronConnect |
+
 ## BLE Services Reference
 
 Full service enumeration of the Blue Smart IP65 12/10:
@@ -355,6 +402,11 @@ sitemaps/myhouse.sitemap            # Victron Charger frame
 **State shows "Unknown"**
 - Occurs when no voltage data has been received yet (first poll after restart)
 - Should resolve after 1-2 poll cycles
+
+**The prick never runs**
+- It needs the verdict `Uncertain`/`Off?` AND the charger in Storage AND 12 h since the last one
+- Right after a restart the verdict is `Connected (startup grace)` for 1 h — no prick
+- Press "Probe charger now" (`MC_Charger_Prick`) to prick by hand; watch `journalctl -u victron-ble-monitor | grep Prick`
 
 **Charger shows "Bulk" but LED says "Float"**
 - Check that charge profile setpoints match your charger configuration
