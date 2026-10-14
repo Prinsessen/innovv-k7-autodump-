@@ -77,6 +77,33 @@ uses this as **the prick** - see "The prick" under Proof D below.
 Each write is acknowledged with the new value (`...080019edf14102`), and a GET returns
 `080019edf141<value>`, so every step can be read back.
 
+#### How the preset command was found (Bluetooth HCI snoop)
+
+Olen's protocol work covers reading; nothing published covered writing a setting on the
+IP65, and his Phoenix on/off write did nothing here. So the command was taken from the
+official app while it did the thing:
+
+1. **Capture.** On an Android phone: Developer options -> *Enable Bluetooth HCI snoop log*,
+   then Bluetooth off and on (many phones only start the log then). Stop anything else that
+   holds the charger's BLE link (here: `sudo systemctl stop victron-ble-monitor` on the Pi).
+   Open VictronConnect, change the setting once (preset Normal -> High -> Normal), note the
+   time, and watch the charger's LEDs to see what the change does.
+2. **Collect.** Developer options -> *Bug report* -> *Full report*. The log is
+   `FS/data/log/bt/btsnoop_hci.log` inside the zip (the path varies by phone).
+3. **Read.** `python3 btsnoop_writes.py btsnoop_hci.log` lists the GATT writes the phone sent,
+   minus the connect sequence, keepalive, poll and register reads. What is left is the
+   command: on 2026-10-14, exactly four writes at the two preset changes, done twice -
+   `06008219edf14102` (High) and `06008219edf14100` (Normal).
+4. **Replay.** Send the same bytes from the Pi on the same characteristic (`306b0003`) and
+   read the register back (`05008119edf1`) to prove the charger took it.
+
+A VE.Direct-over-BLE register write reads `06 00 82 19 <reg lo> <reg hi> 41 <value>` - byte 2
+is `00` in everything the app sends (Olen's inverter command has `03` there). The same
+method should find any other setting VictronConnect can change.
+
+The bug report and the log hold the phone's other Bluetooth traffic and much more - extract
+the one file, delete the rest, never publish either.
+
 > **Note:** Register `0xEDD4` (native charger state) is NOT available over BLE GATT on this charger model. Explicit GET requests return error responses. The "Instant Readout" BLE advertisement feature is also not available on the Blue Smart IP65.
 
 ### Charge State Derivation
@@ -375,7 +402,8 @@ victron-ble/
 ├── README.md                       # This file
 ├── victron_ble_monitor.py          # Daemon source (reference copy)
 ├── victron-ble-monitor.service     # Systemd service file
-└── requirements.txt                # Python dependencies
+├── requirements.txt                # Python dependencies
+└── btsnoop_writes.py               # Lists an app's GATT writes from an Android HCI snoop log
 
 # Deployed on Pi (192.168.1.60):
 /home/pi/victron-ble/
@@ -451,6 +479,9 @@ See `innovv-k7/K7_AUTO_POWER_README.md` for full state machine documentation.
 **Author:** Nanna Agesen ([@Prinsessen](https://github.com/Prinsessen)) — Nanna@agesen.dk
 
 **BLE Protocol Reference:** [Olen](https://github.com/Olen) — Victron BLE GATT protocol reverse engineering via [VictronConnect / phoenix.py](https://github.com/Olen/solar-monitor). The init sequence, register map, and data packet format used in this daemon are based on Olen's work.
+
+**Charge-preset write (`0xEDF1`) and the prick:** found by the author with an Android HCI snoop
+of VictronConnect, 2026-10-14 (see "How the preset command was found").
 
 ## License
 

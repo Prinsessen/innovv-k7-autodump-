@@ -51,6 +51,7 @@ copy "$LIVE/victron-ble/victron_ble_monitor.py"                 "$HERE/victron-b
 copy "$LIVE/victron-ble/README.md"                              "$HERE/victron-ble/README.md"
 copy "$LIVE/victron-ble/victron-ble-monitor.service"            "$HERE/victron-ble/victron-ble-monitor.service"
 copy "$LIVE/victron-ble/requirements.txt"                       "$HERE/victron-ble/requirements.txt"
+copy "$LIVE/victron-ble/btsnoop_writes.py"                      "$HERE/victron-ble/btsnoop_writes.py"
 # Added 2026-10-14 after both had drifted: the dump service's items, and the icons
 # this tree already carries (by name - a new icon is added here on purpose, not by glob).
 copy "$LIVE/items/innovv_k7.items"                              "$HERE/openhab/items/innovv_k7.items"
