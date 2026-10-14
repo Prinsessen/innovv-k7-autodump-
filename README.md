@@ -551,6 +551,8 @@ MIT License — see [LICENSE](LICENSE).
 
 **Author:** Nanna Agesen ([@Prinsessen](https://github.com/Prinsessen)) — Nanna@agesen.dk
 
-**BLE Protocol:** Based on reverse engineering by [Olen](https://github.com/Olen) (VictronConnect / phoenix.py).
+**BLE Protocol:** Reading the charger is based on reverse engineering by [Olen](https://github.com/Olen) (VictronConnect / phoenix.py).
+
+**Charge-preset write and the prick:** the write command for the IP65's charge preset (register `0xEDF1`) - which nothing published covered - was found by the author with an Android Bluetooth HCI snoop of VictronConnect, 2026-10-14, and turned into the clamp-on-bike prick. Method and tool: [victron-ble/README.md](victron-ble/README.md#how-the-preset-command-was-found-bluetooth-hci-snoop), `victron-ble/btsnoop_writes.py`.
 
 Built for a motorcycle with an INNOVV K7 dashcam, automated with openHAB, Shelly, and a Raspberry Pi.
