@@ -1270,7 +1270,11 @@ rules.JSRule({
     // clamps-off transition is detected within a poll cycle, not left stale.
     triggers.ItemStateChangeTrigger('MC_Charger_Voltage'),
     triggers.ItemStateChangeTrigger(BATTERY_ITEM),
-    triggers.ItemStateChangeTrigger('MC_Charger_Current')
+    triggers.ItemStateChangeTrigger('MC_Charger_Current'),
+    // The daemon's verdict is the primary input (isSecondaryConnected): follow it the
+    // moment it changes. Without this a "clamps off" from a prick waited for the
+    // 2-min watchdog - 17:26:07 verdict, 17:28:00 OFF in the owner's test, 2026-10-16.
+    triggers.ItemStateChangeTrigger('MC_Charger_Secondary_Proof')
   ],
   execute: function () {
     updateChargerConnection();
