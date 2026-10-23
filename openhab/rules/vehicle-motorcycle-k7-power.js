@@ -1007,6 +1007,15 @@ rules.JSRule({
 // handleCommand() never fires for shellyplusuni. All relay control and
 // status monitoring is now done via direct HTTP to the Shelly RPC API.
 // =============================================================================
+// The lead probe (vehicle-motorcycle-k7-lead.js) closes the relay for ~3 s to read the
+// sense voltage, and marks that window in cache.shared 'k7_probe_until'. Inside it the
+// relay being ON is expected: neither the sync below nor the counter-punch may touch it.
+// Until 2026-10-23 they did, and every probe read an open relay (lead "out" for two days).
+function leadProbeActive() {
+  var until = cache.shared.get('k7_probe_until');
+  return until !== null && until !== undefined && Date.now() < until;
+}
+
 rules.JSRule({
   name: 'K7 Power - Shelly Status Poll',
   description: 'Poll Shelly Plus Uni for all status (replaces broken binding)',
@@ -1031,7 +1040,9 @@ rules.JSRule({
         var relayOn = data['switch:0'].output;
         var relayItem = items.getItem('MC_K7_Relay');
         var expectedState = relayOn ? 'ON' : 'OFF';
-        if (relayItem.state !== expectedState) {
+        if (relayItem.state !== expectedState && leadProbeActive()) {
+          console.debug(LOG + ': Shelly relay sync skipped - lead probe in progress (device=' + expectedState + ')');
+        } else if (relayItem.state !== expectedState) {
           console.info(LOG + ': Shelly relay sync: device=' + expectedState + ' OH=' + relayItem.state + ' — correcting');
           relayItem.postUpdate(expectedState);
         }
@@ -1112,6 +1123,10 @@ rules.JSRule({
     if (relayState === 'ON') {
       // Counter-punch: relay ON while DUMP_DONE or COOLDOWN = external (Shelly failsafe)
       var currentState = getState();
+      if (leadProbeActive()) {
+        console.info(LOG + ': Relay ON in ' + currentState + ' - the lead probe, left alone');
+        return;
+      }
       if (currentState === STATES.DUMP_DONE || currentState === STATES.COOLDOWN || currentState === STATES.PARKED || currentState === STATES.CHARGING || currentState === STATES.LOW_BATTERY) {
         console.warn(LOG + ': Relay ON detected in ' + currentState + ' - unexpected, counter-punching OFF');
         relayOff('Counter-punch: unexpected ON in ' + currentState);

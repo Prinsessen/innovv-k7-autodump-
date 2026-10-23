@@ -121,6 +121,12 @@ function probe(why) {
     console.warn(LOG + ': Shelly unreachable — lead state left unchanged');
     return null;
   }
+  // Tell vehicle-motorcycle-k7-power.js that the next few seconds of relay ON are ours.
+  // Without it, its 30-second Shelly sync saw the closed relay, called it "unexpected" in
+  // DUMP_DONE and opened it 0.2 s later - the probe then read an open relay, 0.000 V, and
+  // reported the lead out from 2026-10-21 04:37 until a probe happened to fall between two
+  // syncs on 2026-10-23 03:07 and read 0.770 V. Set before closing, valid past the read.
+  if (!was) cache.shared.put('k7_probe_until', Date.now() + SETTLE_MS + 3000);
   if (!was && !setRelay(true)) {
     console.warn(LOG + ': could not close the relay to probe');
     return null;
