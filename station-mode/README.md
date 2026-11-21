@@ -13,12 +13,26 @@ stay on the Pi, this branch is simply left as a record.
 - ✅ **Throughput** from a wired client through the router, using the Pi's own method
   (HTTP GET + `cmd=3012` heartbeat, recording stopped with `cmd=2001&par=0`):
   **1.52 MB/s**, a complete 106 MB clip in 66.5 s, no crash.
-- ⚠️ **Sessions end on their own** after roughly 4–12 minutes: cardv performs an orderly
-  shutdown and the camera comes back as its AP. No hardware watchdog is involved and the
-  ignition stayed on. The cause is being investigated by capturing cardv's console
-  output with `tools/consnoop.c` (FINDINGS §16–§17).
+- ⚠️ **One session ended, one did not.** The first STA session ended after ~4–5 min with an
+  orderly cardv shutdown, right after heavy API use (recording stop/start, heartbeats, a
+  106 MB download). The second session, with almost no API traffic, ran **28+ minutes**
+  without a reboot (an earlier "gone after 12 min" was a false alarm from one lost ping).
+  cardv polls hostapd every second while in STA and fails harmlessly. No hardware watchdog
+  is involved and the ignition stayed on (FINDINGS §16–§18).
+- ⚠️ **SD card write errors** were caught on the console during the second session: from one
+  point on, loop recording failed every ~7 s on the same undeletable oldest clip. That is a
+  card/filesystem problem independent of STA, and it affects the Pi solution too (§19).
 - ⬜ **Not persistent yet.** After a power cycle the camera is back in AP mode. The rootfs is
   read-only and 100 % full, so a boot hook is still the open problem (FINDINGS §8).
+
+## Recommendation (2026-11-21)
+
+**Stay on the Pi solution on `main`.** The K7 sits under the motorcycle seat; in STA mode its
+single internal antenna has to reach the house AP, which is much farther away than the Pi's
+USB adapter beside the bike. Measured: 1.52 MB/s in STA against the Pi's 2.9–4.5 MB/s. STA could
+only catch up with an access point on the home SSID in the garage, and it would still need a boot
+hook (unsolved), a stable truce with cardv, and the Pi's verify/delete pipeline hosted elsewhere.
+This branch stays as the record of what was tried and the working code (FINDINGS §20).
 
 ## Key findings
 

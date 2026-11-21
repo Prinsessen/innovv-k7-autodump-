@@ -358,3 +358,37 @@ Matches: ~4–5 min STA lifetime, orderly shutdown, no crash, no watchdog. It ma
 To confirm: Shelly relay history / openHAB log around 13:30–13:31 (relay OFF → ON), and whether the Pi
 dump service touched the camera. If confirmed: for tests, keep the relay ON manually / pause the openHAB
 rule; for the STA migration, the openHAB state machine must learn that the camera lives on <iot-subnet>.x.
+
+## 18. Second STA session (diagnostic run) — stable; the "14:00 gone" was a false alarm
+- `sta_diag.sh` (consnoop + 5 s monitor + v4 switch) launched 13:47:45; camera on <camera-sta-ip> from 13:48:07.
+- The ping watcher reported "gone" at 14:00:26 and exited on its FIRST failed ping — a false alarm.
+  At 14:16 the camera was still on <camera-sta-ip>: `uptime` 44 min (no reboot since 13:32), **cardv still PID 722**,
+  API answering, wlan0 Managed on the home SSID, 28+ min in STA.
+- Difference from session 1 (which ended ~13:30 with a cardv shutdown): in session 1 I drove the API a lot
+  (2001 stop → download with a heartbeat thread → 2001 start → one more 3012). Session 2 had almost no API traffic.
+- cardv polls hostapd every second while in STA: `Failed to connect to hostapd - wpa_ctrl_open: No such file or
+  directory` — harmless on its own (28 min of it). Open hypothesis: heartbeats make cardv think a phone app is
+  connected, and losing that "app" (it can't see it via hostapd) runs its disconnect/shutdown path.
+
+## 19. ⚠️ The SD card has write errors — the camera is failing to record (independent of STA)
+From cardv's console (`results/console_sta_2026-11-21.log`, captured with consnoop):
+- **13:54:11 local**: `fslinux_SyncWrite() write: errno = 5 (Input/output error)` → `FsLinux_WriteFile() sdio err is set`
+  → `WRITE CARD ERROR drive A` → `EVENT 58369: card write error!`. Nothing was talking to the camera at the time.
+- Since then, every ~7 s: loop recording tries to delete the oldest clip and fails on the **same file every time**:
+  `FileSys_DeleteFile A:\INNOVVK7\Movie_E\20260908202926_003009_R.MP4 failed` (396×), `WRITE CARD ERROR` (396×),
+  cardv restarts recording (`System_WIFI_OFF_AUTO_VIDEO … auto rec`, 197×). Last successful deletes 13:52:58.
+- The kernel (dmesg) shows **no mmc errors**; card is `mmcblk0: SN512 477 GiB` (SDXC), exFAT via the out-of-tree
+  `myexfat` module. Points at the exFAT filesystem / that file's clusters rather than the card electronics —
+  but a 99 %-full card that just threw EIO on a write deserves a health check either way.
+- Consequence: the camera is not producing usable recordings right now, and the Pi's delete-after-verify would
+  also hit that file. Worth checking with the Pi tools (`k7_disktest.py`, `k7_format_sd.py` / `cmd=3010`) — formatting
+  erases the card, so back up what matters first. Not touched by me.
+
+## 20. Placement — why STA will not beat the Pi on this bike (user's point, 2026-11-21)
+The K7 sits **under the motorcycle seat**. In STA mode its single internal 1x1 antenna has to reach the house AP,
+which is much farther away than the Pi's ALFA USB adapter placed near the bike (Pi measured -31 dBm, 2.9–4.5 MB/s).
+Measured here: 1.52 MB/s in STA through the router. Distance, the seat and the frame will keep STA behind the Pi.
+STA would only catch up with an access point on the home SSID placed in the garage next to the bike — and it would
+still need: persistence across power cycles (unsolved, read-only rootfs), cardv cooperation (sessions ended once),
+and the Pi's verify/delete pipeline re-hosted somewhere else. → Recommendation: **keep the Pi solution (`main`)**;
+treat `station-mode` as documented research, revisit only if a garage AP is added and removing the Pi is the goal.
