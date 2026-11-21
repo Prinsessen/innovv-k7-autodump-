@@ -1,0 +1,9 @@
+#!/bin/sh
+# INNOV K7 - auto-join home WiFi (station mode) at boot.
+# This file was added manually. To roll back: delete it and reboot.
+#
+# Non-blocking: runs in background with a delay so the camera app (cardv)
+# finishes its own WiFi setup first; we then switch wlan0 to station mode.
+
+( sleep 15; /etc/wifi/wifi_sta.sh >/tmp/wifi_sta.log 2>&1 ) &
+exit 0

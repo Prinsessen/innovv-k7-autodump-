@@ -1,0 +1,28 @@
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+
+# --- Prefer 5 GHz (higher priority, restricted to 5 GHz frequencies) ---
+network={
+	ssid="YOUR_SSID"
+	psk="YOUR_WIFI_PSK"
+	key_mgmt=WPA-PSK
+	proto=RSN WPA
+	pairwise=CCMP TKIP
+	group=CCMP TKIP
+	scan_ssid=1
+	priority=10
+	# EU 5 GHz channels (36-64 + 100-140). Association to the 5 GHz BSS of "HOME_SSID".
+	freq_list=5180 5200 5220 5240 5260 5280 5300 5320 5500 5520 5540 5560 5580 5600 5620 5640 5660 5680 5700
+}
+
+# --- Fallback: any band (2.4 GHz) if no 5 GHz BSS is usable ---
+network={
+	ssid="YOUR_SSID"
+	psk="YOUR_WIFI_PSK"
+	key_mgmt=WPA-PSK
+	proto=RSN WPA
+	pairwise=CCMP TKIP
+	group=CCMP TKIP
+	scan_ssid=1
+	priority=1
+}

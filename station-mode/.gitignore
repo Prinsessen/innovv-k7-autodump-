@@ -1,0 +1,7 @@
+# real configs with credentials, binaries and logs never belong in this branch
+config/*.conf
+build/nl-build/
+tools/consnoop
+wpa_supplicant
+wpa_supplicant_nl80211
+*.log

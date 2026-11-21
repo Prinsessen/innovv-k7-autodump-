@@ -1,0 +1,10 @@
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+
+# Join "HOME_SSID" on whichever band/AP is best. No band lock, no proto lock.
+network={
+	ssid="YOUR_SSID"
+	psk="YOUR_WIFI_PSK"
+	key_mgmt=WPA-PSK
+	scan_ssid=1
+}
